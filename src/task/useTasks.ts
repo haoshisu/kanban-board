@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
+import { isLocalDataMode } from '../lib/localDataMode'
 import { supabase } from '../lib/supabase'
 import type { BoardStatusKey } from '../board'
 import type { Database } from '../lib/database.types'
+import { loadTasks as loadStoredTasks, saveTasks } from './taskStorage'
 import type { Task, TaskInput } from './types'
 
 type TaskStatus = Database['public']['Tables']['tasks']['Row']['status']
@@ -89,6 +91,27 @@ export const useTasks = (boardId: string | null) => {
       return
     }
 
+    if (isLocalDataMode()) {
+      let isMounted = true
+
+      const loadLocalTasks = async () => {
+        await Promise.resolve()
+
+        if (!isMounted) {
+          return
+        }
+
+        setTasks(loadStoredTasks().filter((task) => task.boardId === boardId))
+        setIsLoadingTasks(false)
+      }
+
+      void loadLocalTasks()
+
+      return () => {
+        isMounted = false
+      }
+    }
+
     let isMounted = true
 
     const loadTasks = async () => {
@@ -151,6 +174,16 @@ export const useTasks = (boardId: string | null) => {
     }
 
     setTasks((currentTasks) => [...currentTasks, optimisticTask])
+
+    if (isLocalDataMode()) {
+      const nextTasks = [...tasks, optimisticTask]
+      const allTasks = [...loadStoredTasks(), optimisticTask]
+
+      setTasks(nextTasks)
+      saveTasks(allTasks)
+
+      return optimisticTask
+    }
 
     const { data, error } = await supabase
       .from('tasks')
@@ -217,6 +250,18 @@ export const useTasks = (boardId: string | null) => {
       currentTasks.map((task) => (task.id === id ? optimisticTask : task)),
     )
 
+    if (isLocalDataMode()) {
+      const nextTasks = tasks.map((task) => (task.id === id ? optimisticTask : task))
+      const allTasks = loadStoredTasks().map((task) =>
+        task.id === id ? optimisticTask : task,
+      )
+
+      setTasks(nextTasks)
+      saveTasks(allTasks)
+
+      return optimisticTask
+    }
+
     const { data, error } = await supabase
       .from('tasks')
       .update({
@@ -258,6 +303,11 @@ export const useTasks = (boardId: string | null) => {
 
     setTasks((currentTasks) => currentTasks.filter((task) => task.id !== id))
 
+    if (isLocalDataMode()) {
+      saveTasks(loadStoredTasks().filter((task) => task.id !== id))
+      return
+    }
+
     const { error } = await supabase.from('tasks').delete().eq('id', id)
 
     if (error) {
@@ -289,6 +339,24 @@ export const useTasks = (boardId: string | null) => {
       ),
     )
 
+    if (isLocalDataMode()) {
+      const movedTask = {
+        ...currentTask,
+        statusKey,
+        position: nextPosition,
+        updatedAt: new Date().toISOString(),
+      }
+      const nextTasks = tasks.map((task) => (task.id === id ? movedTask : task))
+      const allTasks = loadStoredTasks().map((task) =>
+        task.id === id ? movedTask : task,
+      )
+
+      setTasks(nextTasks)
+      saveTasks(allTasks)
+
+      return
+    }
+
     const { data, error } = await supabase
       .from('tasks')
       .update({
@@ -318,6 +386,14 @@ export const useTasks = (boardId: string | null) => {
 
   const deleteTasksByBoard = async (targetBoardId: string) => {
     setTaskError('')
+
+    if (isLocalDataMode()) {
+      saveTasks(loadStoredTasks().filter((task) => task.boardId !== targetBoardId))
+      setTasks((currentTasks) =>
+        currentTasks.filter((task) => task.boardId !== targetBoardId),
+      )
+      return
+    }
 
     const { error } = await supabase
       .from('tasks')

@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
+import { isLocalDataMode } from '../lib/localDataMode';
 import type { User } from '@supabase/supabase-js';
+import { clearAuthUser, loadAuthUser, saveAuthUser } from './authStorage';
 import type { AuthUser, LoginInput, LoginResult } from './types';
 
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -41,6 +43,27 @@ export const useAuth = () => {
  const [isLoading, setIsLoading] = useState(true);
 
  useEffect(() => {
+  if (isLocalDataMode()) {
+   let isMounted = true;
+
+   const loadLocalUser = async () => {
+    await Promise.resolve();
+
+    if (!isMounted) {
+     return;
+    }
+
+    setCurrentUser(loadAuthUser());
+    setIsLoading(false);
+   };
+
+   void loadLocalUser();
+
+   return () => {
+    isMounted = false;
+   };
+  }
+
   let isMounted = true;
 
   supabase.auth.getSession().then(({ data }) => {
@@ -89,6 +112,20 @@ export const useAuth = () => {
    return { success: false, message: '請輸入密碼' };
   }
 
+  if (isLocalDataMode()) {
+   const user = {
+    id: `local-${email}`,
+    email,
+    name: getNameFromEmail(email),
+    loggedInAt: new Date().toISOString(),
+   };
+
+   saveAuthUser(user);
+   setCurrentUser(user);
+
+   return { success: true, message: '' };
+  }
+
   const { data, error } = await supabase.auth.signInWithPassword({
    email,
    password,
@@ -111,6 +148,12 @@ export const useAuth = () => {
  };
 
  const logout = async () => {
+  if (isLocalDataMode()) {
+   clearAuthUser();
+   setCurrentUser(null);
+   return;
+  }
+
   await supabase.auth.signOut();
   setCurrentUser(null);
  };

@@ -1,6 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
+import { isLocalDataMode } from '../lib/localDataMode'
 import { supabase } from '../lib/supabase'
-import { defaultBoardStatuses } from './boardStorage'
+import {
+  defaultBoardStatuses,
+  loadBoards as loadStoredBoards,
+  saveBoards,
+} from './boardStorage'
 import type { Board, BoardInput } from './types'
 
 type BoardRow = {
@@ -47,6 +52,30 @@ export const useBoards = (ownerId: string | undefined) => {
   useEffect(() => {
     if (!ownerId) {
       return
+    }
+
+    if (isLocalDataMode()) {
+      let isMounted = true
+
+      const loadLocalBoards = async () => {
+        await Promise.resolve()
+
+        if (!isMounted) {
+          return
+        }
+
+        const nextBoards = loadStoredBoards()
+
+        setBoards(nextBoards)
+        setSelectedBoardId(nextBoards[0]?.id ?? null)
+        setIsLoadingBoards(false)
+      }
+
+      void loadLocalBoards()
+
+      return () => {
+        isMounted = false
+      }
     }
 
     let isMounted = true
@@ -117,6 +146,15 @@ export const useBoards = (ownerId: string | undefined) => {
     setBoards((currentBoards) => [optimisticBoard, ...currentBoards])
     setSelectedBoardId(optimisticBoard.id)
 
+    if (isLocalDataMode()) {
+      const nextBoards = [optimisticBoard, ...boards]
+
+      setBoards(nextBoards)
+      saveBoards(nextBoards)
+
+      return optimisticBoard
+    }
+
     const { data, error } = await supabase
       .from('boards')
       .insert({
@@ -179,6 +217,17 @@ export const useBoards = (ownerId: string | undefined) => {
       currentBoards.map((board) => (board.id === id ? optimisticBoard : board)),
     )
 
+    if (isLocalDataMode()) {
+      const nextBoards = boards.map((board) =>
+        board.id === id ? optimisticBoard : board,
+      )
+
+      setBoards(nextBoards)
+      saveBoards(nextBoards)
+
+      return optimisticBoard
+    }
+
     const { data, error } = await supabase
       .from('boards')
       .update({
@@ -216,6 +265,11 @@ export const useBoards = (ownerId: string | undefined) => {
 
     if (selectedBoardId === id) {
       setSelectedBoardId(nextBoards[0]?.id ?? null)
+    }
+
+    if (isLocalDataMode()) {
+      saveBoards(nextBoards)
+      return
     }
 
     const { error } = await supabase.from('boards').delete().eq('id', id)

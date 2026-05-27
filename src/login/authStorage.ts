@@ -10,6 +10,7 @@ const isAuthUser = (value: unknown): value is AuthUser => {
   const user = value as Partial<AuthUser>
 
   return (
+    typeof user.id === 'string' &&
     typeof user.email === 'string' &&
     typeof user.name === 'string' &&
     typeof user.loggedInAt === 'string'
