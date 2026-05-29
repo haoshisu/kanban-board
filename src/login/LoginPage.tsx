@@ -32,7 +32,6 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
     <main className="flex min-h-screen items-center justify-center bg-slate-100 px-4 py-8 text-slate-950">
       <section className="w-full max-w-md">
         <div className="mb-6">
-          <p className="text-sm font-medium text-slate-500">多人協作任務看板</p>
           <h1 className="mt-2 text-3xl font-bold tracking-normal text-slate-950">
             登入
           </h1>

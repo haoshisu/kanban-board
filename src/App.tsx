@@ -8,9 +8,11 @@ type ProtectedRouteProps = {
   children: ReactNode
 }
 
-const LoginPage = lazy(() =>import('./login/LoginPage'))
+const LoginPage = lazy(() => import('./login/LoginPage'))
 
 const BoardPage = lazy(() => import('./board/BoardPage'))
+
+const NotFoundPage = lazy(() => import('./404/NotFoundPage'))
 
 
 function PageFallback() {
@@ -45,25 +47,9 @@ function App() {
     <BrowserRouter>
       <Suspense fallback={<PageFallback />}>
         <Routes>
-          <Route
-            path="/"
-            element={
-              <Navigate replace to={isAuthenticated ? '/board' : '/login'} />
-            }
-          />
-          <Route
-            path="/login"
-            element={
-              isAuthenticated ? (
-                <Navigate replace to="/board" />
-              ) : (
-                <LoginPage onLogin={login} />
-              )
-            }
-          />
-          <Route
-            path="/board"
-            element={
+          <Route path="/" element={<Navigate replace to={isAuthenticated ? '/board' : '/login'} />}/>
+          <Route path="/login" element={isAuthenticated ? (<Navigate replace to="/board" />) : (<LoginPage onLogin={login} />)}/>
+          <Route path="/board" element={
               <ProtectedRoute isAuthenticated={isAuthenticated}>
                 <BoardPage
                   userEmail={currentUser?.email}
@@ -73,12 +59,7 @@ function App() {
               </ProtectedRoute>
             }
           />
-          <Route
-            path="*"
-            element={
-              <Navigate replace to={isAuthenticated ? '/board' : '/login'} />
-            }
-          />
+          <Route path="*" element={<NotFoundPage homePath={isAuthenticated ? '/board' : '/login'} />}/>
         </Routes>
       </Suspense>
     </BrowserRouter>

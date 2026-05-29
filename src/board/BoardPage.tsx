@@ -97,12 +97,12 @@ export default function BoardPage({ userEmail, userId, onLogout }: BoardPageProp
       | { taskId?: unknown }
       | undefined
       
-      console.log(sourceData)
+     
     const targetData = event.operation.target?.data as
       | { statusKey?: unknown }
       | undefined
 
-      console.log(targetData)
+     
     const taskId = sourceData?.taskId
     const statusKey = targetData?.statusKey
 
@@ -120,9 +120,6 @@ export default function BoardPage({ userEmail, userId, onLogout }: BoardPageProp
         <header className="mb-6">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
             <div>
-              <p className="text-sm font-medium text-slate-500">
-                多人協作任務看板
-              </p>
               <h1 className="mt-2 text-3xl font-bold tracking-normal text-slate-950">
                 Board 管理
               </h1>
