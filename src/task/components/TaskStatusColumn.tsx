@@ -1,4 +1,5 @@
 import { useDroppable } from '@dnd-kit/react'
+import { memo } from 'react'
 import type { BoardStatus } from '../../board'
 import { TaskCard } from './TaskCard'
 import type { Task } from '../types'
@@ -11,7 +12,7 @@ type TaskStatusColumnProps = {
   onDelete: (task: Task) => void
 }
 
-export function TaskStatusColumn({
+function TaskStatusColumnComponent({
   status,
   tasks,
   onCreate,
@@ -70,3 +71,5 @@ export function TaskStatusColumn({
     </section>
   )
 }
+
+export const TaskStatusColumn = memo(TaskStatusColumnComponent)

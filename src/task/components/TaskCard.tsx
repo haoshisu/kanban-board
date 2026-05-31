@@ -1,4 +1,5 @@
 import { useDraggable } from '@dnd-kit/react'
+import { memo } from 'react'
 import type { Task } from '../types'
 
 type TaskCardProps = {
@@ -12,7 +13,7 @@ const dateFormatter = new Intl.DateTimeFormat('zh-TW', {
   day: 'numeric',
 })
 
-export function TaskCard({ task, onEdit, onDelete }: TaskCardProps) {
+function TaskCardComponent({ task, onEdit, onDelete }: TaskCardProps) {
   const { isDragging, ref } = useDraggable({
     id: task.id,
     type: 'task',
@@ -61,3 +62,5 @@ export function TaskCard({ task, onEdit, onDelete }: TaskCardProps) {
     </article>
   )
 }
+
+export const TaskCard = memo(TaskCardComponent)

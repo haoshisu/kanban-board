@@ -1,37 +1,42 @@
-import { useEffect, useState } from 'react';
-import { supabase } from '../lib/supabase';
-import { isLocalDataMode } from '../lib/localDataMode';
-import type { User } from '@supabase/supabase-js';
-import { clearAuthUser, loadAuthUser, saveAuthUser } from './authStorage';
-import type { AuthUser, LoginInput, LoginResult } from './types';
+import { useEffect, useState } from "react";
+import { getSupabase } from "../lib/supabase";
+import { isLocalDataMode } from "../lib/localDataMode";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import type { User } from "@supabase/supabase-js";
+import type { Database } from "../lib/database.types";
+import { clearAuthUser, loadAuthUser, saveAuthUser } from "./authStorage";
+import type { AuthUser, LoginInput, LoginResult } from "./types";
 
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 const getNameFromEmail = (email: string) => {
- const [name] = email.split('@');
+ const [name] = email.split("@");
 
  return name || email;
 };
 
 const mapAuthUser = (user: User): AuthUser => {
- const email = user.email ?? '';
+ const email = user.email ?? "";
 
  return {
   id: user.id,
   email,
   name:
-   typeof user.user_metadata.name === 'string' ? user.user_metadata.name : getNameFromEmail(email),
+   typeof user.user_metadata.name === "string" ? user.user_metadata.name : getNameFromEmail(email),
   loggedInAt: user.last_sign_in_at ?? new Date().toISOString(),
  };
 };
 
-const ensureProfile = async (user: AuthUser) => {
- const { error } = await supabase.from('profiles').upsert(
+const ensureProfile = async (
+ supabase: SupabaseClient<Database>,
+ user: AuthUser,
+) => {
+ const { error } = await supabase.from("profiles").upsert(
   {
    id: user.id,
    display_name: user.name,
   },
-  { onConflict: 'id' },
+  { onConflict: "id" },
  );
  if (error) {
   console.error(error);
@@ -66,7 +71,10 @@ export const useAuth = () => {
 
   let isMounted = true;
 
-  supabase.auth.getSession().then(({ data }) => {
+  const loadSupabaseSession = async () => {
+   const supabase = await getSupabase();
+   const { data } = await supabase.auth.getSession();
+
    if (!isMounted) {
     return;
    }
@@ -74,29 +82,41 @@ export const useAuth = () => {
    if (data.session?.user) {
     const user = mapAuthUser(data.session.user);
     setCurrentUser(user);
-    void ensureProfile(user);
+    void ensureProfile(supabase, user);
+   } else {
+    setCurrentUser(null);
+   }
+   setIsLoading(false);
+  };
+
+  void loadSupabaseSession();
+
+  let unsubscribe: (() => void) | undefined;
+
+  void getSupabase().then((supabase) => {
+   if (!isMounted) {
+    return;
+   }
+
+   const {
+    data: { subscription },
+   } = supabase.auth.onAuthStateChange((_event, session) => {
+   if (session?.user) {
+    const user = mapAuthUser(session.user);
+    setCurrentUser(user);
+    void ensureProfile(supabase, user);
    } else {
     setCurrentUser(null);
    }
    setIsLoading(false);
   });
 
-  const {
-   data: { subscription },
-  } = supabase.auth.onAuthStateChange((_event, session) => {
-   if (session?.user) {
-    const user = mapAuthUser(session.user);
-    setCurrentUser(user);
-    void ensureProfile(user);
-   } else {
-    setCurrentUser(null);
-   }
-   setIsLoading(false);
+   unsubscribe = () => subscription.unsubscribe();
   });
 
   return () => {
    isMounted = false;
-   subscription.unsubscribe();
+   unsubscribe?.();
   };
  }, []);
 
@@ -105,11 +125,11 @@ export const useAuth = () => {
   const password = input.password.trim();
 
   if (!emailPattern.test(email)) {
-   return { success: false, message: '請輸入有效的 email' };
+   return { success: false, message: "請輸入有效的 email" };
   }
 
   if (!password) {
-   return { success: false, message: '請輸入密碼' };
+   return { success: false, message: "請輸入密碼" };
   }
 
   if (isLocalDataMode()) {
@@ -123,9 +143,10 @@ export const useAuth = () => {
    saveAuthUser(user);
    setCurrentUser(user);
 
-   return { success: true, message: '' };
+   return { success: true, message: "" };
   }
 
+  const supabase = await getSupabase();
   const { data, error } = await supabase.auth.signInWithPassword({
    email,
    password,
@@ -134,17 +155,17 @@ export const useAuth = () => {
   if (error) {
    return {
     success: false,
-    message: error.message || '登入失敗，請確認帳號或密碼',
+    message: error.message || "登入失敗，請確認帳號或密碼",
    };
   }
 
   if (data.user) {
    const user = mapAuthUser(data.user);
-   await ensureProfile(user);
+   await ensureProfile(supabase, user);
    setCurrentUser(user);
   }
 
-  return { success: true, message: '' };
+  return { success: true, message: "" };
  };
 
  const logout = async () => {
@@ -154,6 +175,7 @@ export const useAuth = () => {
    return;
   }
 
+  const supabase = await getSupabase();
   await supabase.auth.signOut();
   setCurrentUser(null);
  };

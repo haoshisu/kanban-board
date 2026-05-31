@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { isLocalDataMode } from '../lib/localDataMode'
-import { supabase } from '../lib/supabase'
+import { getSupabase } from '../lib/supabase'
 import type { BoardStatusKey } from '../board'
 import type { Database } from '../lib/database.types'
 import { loadTasks as loadStoredTasks, saveTasks } from './taskStorage'
@@ -118,6 +118,8 @@ export const useTasks = (boardId: string | null) => {
       setIsLoadingTasks(true)
       setTaskError('')
 
+      const supabase = await getSupabase()
+
       const { data, error } = await supabase
         .from('tasks')
         .select(
@@ -149,7 +151,7 @@ export const useTasks = (boardId: string | null) => {
     }
   }, [boardId])
 
-  const createTask = async (input: TaskInput) => {
+  const createTask = useCallback(async (input: TaskInput) => {
     if (!boardId) {
       return null
     }
@@ -185,6 +187,7 @@ export const useTasks = (boardId: string | null) => {
       return optimisticTask
     }
 
+    const supabase = await getSupabase()
     const { data, error } = await supabase
       .from('tasks')
       .insert({
@@ -216,9 +219,9 @@ export const useTasks = (boardId: string | null) => {
     )
 
     return task
-  }
+  }, [boardId, tasks])
 
-  const updateTask = async (id: string, input: TaskInput) => {
+  const updateTask = useCallback(async (id: string, input: TaskInput) => {
     const normalizedInput = normalizeTaskInput(input)
 
     if (!normalizedInput.title) {
@@ -262,6 +265,7 @@ export const useTasks = (boardId: string | null) => {
       return optimisticTask
     }
 
+    const supabase = await getSupabase()
     const { data, error } = await supabase
       .from('tasks')
       .update({
@@ -291,9 +295,9 @@ export const useTasks = (boardId: string | null) => {
     )
 
     return updatedTask
-  }
+  }, [tasks])
 
-  const deleteTask = async (id: string) => {
+  const deleteTask = useCallback(async (id: string) => {
     setTaskError('')
     const deletedTask = tasks.find((task) => task.id === id)
 
@@ -308,6 +312,7 @@ export const useTasks = (boardId: string | null) => {
       return
     }
 
+    const supabase = await getSupabase()
     const { error } = await supabase.from('tasks').delete().eq('id', id)
 
     if (error) {
@@ -315,9 +320,9 @@ export const useTasks = (boardId: string | null) => {
       setTasks((currentTasks) => [...currentTasks, deletedTask])
       return
     }
-  }
+  }, [tasks])
 
-  const moveTaskStatus = async (id: string, statusKey: BoardStatusKey) => {
+  const moveTaskStatus = useCallback(async (id: string, statusKey: BoardStatusKey) => {
     const currentTask = tasks.find((task) => task.id === id)
 
     if (!currentTask || currentTask.statusKey === statusKey) {
@@ -357,6 +362,7 @@ export const useTasks = (boardId: string | null) => {
       return
     }
 
+    const supabase = await getSupabase()
     const { data, error } = await supabase
       .from('tasks')
       .update({
@@ -382,9 +388,9 @@ export const useTasks = (boardId: string | null) => {
     setTasks((currentTasks) =>
       currentTasks.map((task) => (task.id === id ? updatedTask : task)),
     )
-  }
+  }, [tasks])
 
-  const deleteTasksByBoard = async (targetBoardId: string) => {
+  const deleteTasksByBoard = useCallback(async (targetBoardId: string) => {
     setTaskError('')
 
     if (isLocalDataMode()) {
@@ -395,6 +401,7 @@ export const useTasks = (boardId: string | null) => {
       return
     }
 
+    const supabase = await getSupabase()
     const { error } = await supabase
       .from('tasks')
       .delete()
@@ -408,7 +415,7 @@ export const useTasks = (boardId: string | null) => {
     setTasks((currentTasks) =>
       currentTasks.filter((task) => task.boardId !== targetBoardId),
     )
-  }
+  }, [])
 
   return {
     tasks: sortedTasks,

@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { isLocalDataMode } from '../lib/localDataMode'
-import { supabase } from '../lib/supabase'
+import { getSupabase } from '../lib/supabase'
 import {
   defaultBoardStatuses,
   loadBoards as loadStoredBoards,
@@ -84,6 +84,8 @@ export const useBoards = (ownerId: string | undefined) => {
       setIsLoadingBoards(true)
       setBoardError('')
 
+      const supabase = await getSupabase()
+
       const { data, error } = await supabase
         .from('boards')
         .select('id, name, description, created_at, updated_at')
@@ -121,11 +123,11 @@ export const useBoards = (ownerId: string | undefined) => {
     }
   }, [ownerId])
 
-  const selectBoard = (id: string) => {
+  const selectBoard = useCallback((id: string) => {
     setSelectedBoardId(id)
-  }
+  }, [])
 
-  const createBoard = async (input: BoardInput) => {
+  const createBoard = useCallback(async (input: BoardInput) => {
     const normalizedInput = normalizeBoardInput(input)
 
     if (!ownerId || !normalizedInput.name) {
@@ -155,6 +157,7 @@ export const useBoards = (ownerId: string | undefined) => {
       return optimisticBoard
     }
 
+    const supabase = await getSupabase()
     const { data, error } = await supabase
       .from('boards')
       .insert({
@@ -190,9 +193,9 @@ export const useBoards = (ownerId: string | undefined) => {
     )
 
     return board
-  }
+  }, [boards, ownerId])
 
-  const updateBoard = async (id: string, input: BoardInput) => {
+  const updateBoard = useCallback(async (id: string, input: BoardInput) => {
     const normalizedInput = normalizeBoardInput(input)
 
     if (!normalizedInput.name) {
@@ -228,6 +231,7 @@ export const useBoards = (ownerId: string | undefined) => {
       return optimisticBoard
     }
 
+    const supabase = await getSupabase()
     const { data, error } = await supabase
       .from('boards')
       .update({
@@ -253,9 +257,9 @@ export const useBoards = (ownerId: string | undefined) => {
     )
 
     return updatedBoard
-  }
+  }, [boards])
 
-  const deleteBoard = async (id: string) => {
+  const deleteBoard = useCallback(async (id: string) => {
     setBoardError('')
     const previousBoards = boards
     const previousSelectedBoardId = selectedBoardId
@@ -272,6 +276,7 @@ export const useBoards = (ownerId: string | undefined) => {
       return
     }
 
+    const supabase = await getSupabase()
     const { error } = await supabase.from('boards').delete().eq('id', id)
 
     if (error) {
@@ -280,7 +285,7 @@ export const useBoards = (ownerId: string | undefined) => {
       setSelectedBoardId(previousSelectedBoardId)
       return
     }
-  }
+  }, [boards, selectedBoardId])
 
   return {
     boards,
