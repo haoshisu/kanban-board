@@ -1,4 +1,5 @@
 import type { Board, BoardStatus } from './types'
+import { captureAppError } from '../lib/errorReporting'
 
 const BOARD_STORAGE_KEY = 'kanban-board:boards'
 
@@ -40,11 +41,23 @@ export const loadBoards = (): Board[] => {
     }
 
     return parsed.filter(isBoard)
-  } catch {
+  } catch (error) {
+    captureAppError(error, {
+      area: 'storage',
+      action: 'loadBoards',
+    })
     return []
   }
 }
 
 export const saveBoards = (boards: Board[]) => {
-  localStorage.setItem(BOARD_STORAGE_KEY, JSON.stringify(boards))
+  try {
+    localStorage.setItem(BOARD_STORAGE_KEY, JSON.stringify(boards))
+  } catch (error) {
+    captureAppError(error, {
+      area: 'storage',
+      action: 'saveBoards',
+      boardCount: boards.length,
+    })
+  }
 }

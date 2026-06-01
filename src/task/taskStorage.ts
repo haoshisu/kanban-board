@@ -1,4 +1,5 @@
 import type { Task } from './types'
+import { captureAppError } from '../lib/errorReporting'
 
 const TASK_STORAGE_KEY = 'kanban-board:tasks'
 
@@ -35,11 +36,23 @@ export const loadTasks = (): Task[] => {
     }
 
     return parsed.filter(isTask)
-  } catch {
+  } catch (error) {
+    captureAppError(error, {
+      area: 'storage',
+      action: 'loadTasks',
+    })
     return []
   }
 }
 
 export const saveTasks = (tasks: Task[]) => {
-  localStorage.setItem(TASK_STORAGE_KEY, JSON.stringify(tasks))
+  try {
+    localStorage.setItem(TASK_STORAGE_KEY, JSON.stringify(tasks))
+  } catch (error) {
+    captureAppError(error, {
+      area: 'storage',
+      action: 'saveTasks',
+      taskCount: tasks.length,
+    })
+  }
 }

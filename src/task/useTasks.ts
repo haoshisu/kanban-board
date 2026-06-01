@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { captureAppError } from '../lib/errorReporting'
 import { isLocalDataMode } from '../lib/localDataMode'
 import { getSupabase } from '../lib/supabase'
 import type { BoardStatusKey } from '../board'
@@ -118,30 +119,44 @@ export const useTasks = (boardId: string | null) => {
       setIsLoadingTasks(true)
       setTaskError('')
 
-      const supabase = await getSupabase()
+      try {
+        const supabase = await getSupabase()
 
-      const { data, error } = await supabase
-        .from('tasks')
-        .select(
-          'id, board_id, title, description, status, position, created_at, updated_at',
-        )
-        .eq('board_id', boardId)
-        .order('status', { ascending: true })
-        .order('position', { ascending: true })
+        const { data, error } = await supabase
+          .from('tasks')
+          .select(
+            'id, board_id, title, description, status, position, created_at, updated_at',
+          )
+          .eq('board_id', boardId)
+          .order('status', { ascending: true })
+          .order('position', { ascending: true })
 
-      if (!isMounted) {
-        return
-      }
+        if (!isMounted) {
+          return
+        }
 
-      if (error) {
-        setTaskError(error.message)
-        setTasks([])
+        if (error) {
+          setTaskError(error.message)
+          setTasks([])
+          setIsLoadingTasks(false)
+          return
+        }
+
+        setTasks(data.map(mapTaskRow))
         setIsLoadingTasks(false)
-        return
-      }
+      } catch (error) {
+        captureAppError(error, {
+          area: 'tasks',
+          action: 'loadTasks',
+          boardId,
+        })
 
-      setTasks(data.map(mapTaskRow))
-      setIsLoadingTasks(false)
+        if (isMounted) {
+          setTaskError('載入 tasks 時發生錯誤，請稍後再試')
+          setTasks([])
+          setIsLoadingTasks(false)
+        }
+      }
     }
 
     void loadTasks()
@@ -187,27 +202,51 @@ export const useTasks = (boardId: string | null) => {
       return optimisticTask
     }
 
-    const supabase = await getSupabase()
-    const { data, error } = await supabase
-      .from('tasks')
-      .insert({
-        id: optimisticTask.id,
-        board_id: boardId,
-        title: normalizedInput.title,
-        description: normalizedInput.description,
-        status: statusKeyToDbStatus[normalizedInput.statusKey],
-        position: optimisticTask.position,
+    let data: TaskRow | null = null
+    let error: { message: string } | null
+
+    try {
+      const supabase = await getSupabase()
+      const result = await supabase
+        .from('tasks')
+        .insert({
+          id: optimisticTask.id,
+          board_id: boardId,
+          title: normalizedInput.title,
+          description: normalizedInput.description,
+          status: statusKeyToDbStatus[normalizedInput.statusKey],
+          position: optimisticTask.position,
+        })
+        .select(
+          'id, board_id, title, description, status, position, created_at, updated_at',
+        )
+        .single()
+
+      data = result.data
+      error = result.error
+    } catch (caughtError) {
+      captureAppError(caughtError, {
+        area: 'tasks',
+        action: 'createTask',
+        boardId,
+        statusKey: normalizedInput.statusKey,
       })
-      .select(
-        'id, board_id, title, description, status, position, created_at, updated_at',
-      )
-      .single()
+      error = { message: '建立 task 時發生錯誤，請稍後再試' }
+    }
+
+    if (!data && !error) {
+      error = { message: '建立 task 時沒有收到有效資料' }
+    }
 
     if (error) {
       setTaskError(error.message)
       setTasks((currentTasks) =>
         currentTasks.filter((task) => task.id !== optimisticTask.id),
       )
+      return null
+    }
+
+    if (!data) {
       return null
     }
 
@@ -265,27 +304,52 @@ export const useTasks = (boardId: string | null) => {
       return optimisticTask
     }
 
-    const supabase = await getSupabase()
-    const { data, error } = await supabase
-      .from('tasks')
-      .update({
-        title: normalizedInput.title,
-        description: normalizedInput.description,
-        status: statusKeyToDbStatus[normalizedInput.statusKey],
-        position,
-        updated_at: new Date().toISOString(),
+    let data: TaskRow | null = null
+    let error: { message: string } | null
+
+    try {
+      const supabase = await getSupabase()
+      const result = await supabase
+        .from('tasks')
+        .update({
+          title: normalizedInput.title,
+          description: normalizedInput.description,
+          status: statusKeyToDbStatus[normalizedInput.statusKey],
+          position,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', id)
+        .select(
+          'id, board_id, title, description, status, position, created_at, updated_at',
+        )
+        .single()
+
+      data = result.data
+      error = result.error
+    } catch (caughtError) {
+      captureAppError(caughtError, {
+        area: 'tasks',
+        action: 'updateTask',
+        boardId: currentTask.boardId,
+        taskId: id,
+        statusKey: normalizedInput.statusKey,
       })
-      .eq('id', id)
-      .select(
-        'id, board_id, title, description, status, position, created_at, updated_at',
-      )
-      .single()
+      error = { message: '更新 task 時發生錯誤，請稍後再試' }
+    }
+
+    if (!data && !error) {
+      error = { message: '更新 task 時沒有收到有效資料' }
+    }
 
     if (error) {
       setTaskError(error.message)
       setTasks((currentTasks) =>
         currentTasks.map((task) => (task.id === id ? currentTask : task)),
       )
+      return null
+    }
+
+    if (!data) {
       return null
     }
 
@@ -312,8 +376,22 @@ export const useTasks = (boardId: string | null) => {
       return
     }
 
-    const supabase = await getSupabase()
-    const { error } = await supabase.from('tasks').delete().eq('id', id)
+    let error: { message: string } | null
+
+    try {
+      const supabase = await getSupabase()
+      const result = await supabase.from('tasks').delete().eq('id', id)
+
+      error = result.error
+    } catch (caughtError) {
+      captureAppError(caughtError, {
+        area: 'tasks',
+        action: 'deleteTask',
+        boardId: deletedTask.boardId,
+        taskId: id,
+      })
+      error = { message: '刪除 task 時發生錯誤，請稍後再試' }
+    }
 
     if (error) {
       setTaskError(error.message)
@@ -362,25 +440,50 @@ export const useTasks = (boardId: string | null) => {
       return
     }
 
-    const supabase = await getSupabase()
-    const { data, error } = await supabase
-      .from('tasks')
-      .update({
-        status: statusKeyToDbStatus[statusKey],
-        position: nextPosition,
-        updated_at: new Date().toISOString(),
+    let data: TaskRow | null = null
+    let error: { message: string } | null
+
+    try {
+      const supabase = await getSupabase()
+      const result = await supabase
+        .from('tasks')
+        .update({
+          status: statusKeyToDbStatus[statusKey],
+          position: nextPosition,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', id)
+        .select(
+          'id, board_id, title, description, status, position, created_at, updated_at',
+        )
+        .single()
+
+      data = result.data
+      error = result.error
+    } catch (caughtError) {
+      captureAppError(caughtError, {
+        area: 'tasks',
+        action: 'moveTaskStatus',
+        boardId: currentTask.boardId,
+        taskId: id,
+        statusKey,
       })
-      .eq('id', id)
-      .select(
-        'id, board_id, title, description, status, position, created_at, updated_at',
-      )
-      .single()
+      error = { message: '移動 task 時發生錯誤，請稍後再試' }
+    }
+
+    if (!data && !error) {
+      error = { message: '移動 task 時沒有收到有效資料' }
+    }
 
     if (error) {
       setTaskError(error.message)
       setTasks((currentTasks) =>
         currentTasks.map((task) => (task.id === id ? currentTask : task)),
       )
+      return
+    }
+
+    if (!data) {
       return
     }
 
@@ -401,11 +504,24 @@ export const useTasks = (boardId: string | null) => {
       return
     }
 
-    const supabase = await getSupabase()
-    const { error } = await supabase
-      .from('tasks')
-      .delete()
-      .eq('board_id', targetBoardId)
+    let error: { message: string } | null
+
+    try {
+      const supabase = await getSupabase()
+      const result = await supabase
+        .from('tasks')
+        .delete()
+        .eq('board_id', targetBoardId)
+
+      error = result.error
+    } catch (caughtError) {
+      captureAppError(caughtError, {
+        area: 'tasks',
+        action: 'deleteTasksByBoard',
+        boardId: targetBoardId,
+      })
+      error = { message: '刪除 board tasks 時發生錯誤，請稍後再試' }
+    }
 
     if (error) {
       setTaskError(error.message)

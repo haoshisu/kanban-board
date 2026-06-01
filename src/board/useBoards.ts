@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { captureAppError } from '../lib/errorReporting'
 import { isLocalDataMode } from '../lib/localDataMode'
 import { getSupabase } from '../lib/supabase'
 import {
@@ -84,36 +85,51 @@ export const useBoards = (ownerId: string | undefined) => {
       setIsLoadingBoards(true)
       setBoardError('')
 
-      const supabase = await getSupabase()
+      try {
+        const supabase = await getSupabase()
 
-      const { data, error } = await supabase
-        .from('boards')
-        .select('id, name, description, created_at, updated_at')
-        .eq('owner_id', ownerId)
-        .order('updated_at', { ascending: false })
+        const { data, error } = await supabase
+          .from('boards')
+          .select('id, name, description, created_at, updated_at')
+          .eq('owner_id', ownerId)
+          .order('updated_at', { ascending: false })
 
-      if (!isMounted) {
-        return
-      }
-
-      if (error) {
-        setBoardError(error.message)
-        setBoards([])
-        setSelectedBoardId(null)
-        setIsLoadingBoards(false)
-        return
-      }
-
-      const nextBoards = data.map(mapBoardRow)
-      setBoards(nextBoards)
-      setSelectedBoardId((currentId) => {
-        if (nextBoards.some((board) => board.id === currentId)) {
-          return currentId
+        if (!isMounted) {
+          return
         }
 
-        return nextBoards[0]?.id ?? null
-      })
-      setIsLoadingBoards(false)
+        if (error) {
+          setBoardError(error.message)
+          setBoards([])
+          setSelectedBoardId(null)
+          setIsLoadingBoards(false)
+          return
+        }
+
+        const nextBoards = data.map(mapBoardRow)
+        setBoards(nextBoards)
+        setSelectedBoardId((currentId) => {
+          if (nextBoards.some((board) => board.id === currentId)) {
+            return currentId
+          }
+
+          return nextBoards[0]?.id ?? null
+        })
+        setIsLoadingBoards(false)
+      } catch (error) {
+        captureAppError(error, {
+          area: 'boards',
+          action: 'loadBoards',
+          ownerId,
+        })
+
+        if (isMounted) {
+          setBoardError('載入 boards 時發生錯誤，請稍後再試')
+          setBoards([])
+          setSelectedBoardId(null)
+          setIsLoadingBoards(false)
+        }
+      }
     }
 
     void loadBoards()
@@ -157,17 +173,36 @@ export const useBoards = (ownerId: string | undefined) => {
       return optimisticBoard
     }
 
-    const supabase = await getSupabase()
-    const { data, error } = await supabase
-      .from('boards')
-      .insert({
-        id: optimisticBoard.id,
-        owner_id: ownerId,
-        name: normalizedInput.name,
-        description: normalizedInput.description,
+    let data: BoardRow | null = null
+    let error: { message: string } | null
+
+    try {
+      const supabase = await getSupabase()
+      const result = await supabase
+        .from('boards')
+        .insert({
+          id: optimisticBoard.id,
+          owner_id: ownerId,
+          name: normalizedInput.name,
+          description: normalizedInput.description,
+        })
+        .select('id, name, description, created_at, updated_at')
+        .single()
+
+      data = result.data
+      error = result.error
+    } catch (caughtError) {
+      captureAppError(caughtError, {
+        area: 'boards',
+        action: 'createBoard',
+        ownerId,
       })
-      .select('id, name, description, created_at, updated_at')
-      .single()
+      error = { message: '建立 board 時發生錯誤，請稍後再試' }
+    }
+
+    if (!data && !error) {
+      error = { message: '建立 board 時沒有收到有效資料' }
+    }
 
     if (error) {
       setBoardError(error.message)
@@ -182,6 +217,10 @@ export const useBoards = (ownerId: string | undefined) => {
 
         return nextBoards
       })
+      return null
+    }
+
+    if (!data) {
       return null
     }
 
@@ -231,23 +270,46 @@ export const useBoards = (ownerId: string | undefined) => {
       return optimisticBoard
     }
 
-    const supabase = await getSupabase()
-    const { data, error } = await supabase
-      .from('boards')
-      .update({
-        name: normalizedInput.name,
-        description: normalizedInput.description,
-        updated_at: new Date().toISOString(),
+    let data: BoardRow | null = null
+    let error: { message: string } | null
+
+    try {
+      const supabase = await getSupabase()
+      const result = await supabase
+        .from('boards')
+        .update({
+          name: normalizedInput.name,
+          description: normalizedInput.description,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', id)
+        .select('id, name, description, created_at, updated_at')
+        .single()
+
+      data = result.data
+      error = result.error
+    } catch (caughtError) {
+      captureAppError(caughtError, {
+        area: 'boards',
+        action: 'updateBoard',
+        boardId: id,
       })
-      .eq('id', id)
-      .select('id, name, description, created_at, updated_at')
-      .single()
+      error = { message: '更新 board 時發生錯誤，請稍後再試' }
+    }
+
+    if (!data && !error) {
+      error = { message: '更新 board 時沒有收到有效資料' }
+    }
 
     if (error) {
       setBoardError(error.message)
       setBoards((currentBoards) =>
         currentBoards.map((board) => (board.id === id ? previousBoard : board)),
       )
+      return null
+    }
+
+    if (!data) {
       return null
     }
 
@@ -276,8 +338,21 @@ export const useBoards = (ownerId: string | undefined) => {
       return
     }
 
-    const supabase = await getSupabase()
-    const { error } = await supabase.from('boards').delete().eq('id', id)
+    let error: { message: string } | null
+
+    try {
+      const supabase = await getSupabase()
+      const result = await supabase.from('boards').delete().eq('id', id)
+
+      error = result.error
+    } catch (caughtError) {
+      captureAppError(caughtError, {
+        area: 'boards',
+        action: 'deleteBoard',
+        boardId: id,
+      })
+      error = { message: '刪除 board 時發生錯誤，請稍後再試' }
+    }
 
     if (error) {
       setBoardError(error.message)

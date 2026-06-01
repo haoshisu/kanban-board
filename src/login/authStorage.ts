@@ -1,4 +1,5 @@
 import type { AuthUser } from './types'
+import { captureAppError } from '../lib/errorReporting'
 
 const AUTH_STORAGE_KEY = 'kanban-board:auth-user'
 
@@ -28,15 +29,34 @@ export const loadAuthUser = (): AuthUser | null => {
     const parsed: unknown = JSON.parse(value)
 
     return isAuthUser(parsed) ? parsed : null
-  } catch {
+  } catch (error) {
+    captureAppError(error, {
+      area: 'storage',
+      action: 'loadAuthUser',
+    })
     return null
   }
 }
 
 export const saveAuthUser = (user: AuthUser) => {
-  localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(user))
+  try {
+    localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(user))
+  } catch (error) {
+    captureAppError(error, {
+      area: 'storage',
+      action: 'saveAuthUser',
+      hasUser: Boolean(user.id),
+    })
+  }
 }
 
 export const clearAuthUser = () => {
-  localStorage.removeItem(AUTH_STORAGE_KEY)
+  try {
+    localStorage.removeItem(AUTH_STORAGE_KEY)
+  } catch (error) {
+    captureAppError(error, {
+      area: 'storage',
+      action: 'clearAuthUser',
+    })
+  }
 }

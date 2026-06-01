@@ -5,6 +5,7 @@ import { BoardCard } from "./components/BoardCard";
 import { BoardForm } from "./components/BoardForm";
 import { EmptyState } from "./components/EmptyState";
 import { useBoards } from "./useBoards";
+import { captureAppError } from "../lib/errorReporting";
 import { TaskForm, TaskStatusColumn, useTasks } from "../task";
 import type { Board } from "./types";
 import type { BoardStatus } from "./types";
@@ -166,7 +167,14 @@ export default function BoardPage({ userEmail, userId, onLogout }: BoardPageProp
     typeof taskId === "string" &&
     (statusKey === "todo" || statusKey === "inProgress" || statusKey === "done")
    ) {
-    void moveTaskStatus(taskId, statusKey);
+    void moveTaskStatus(taskId, statusKey).catch((error: unknown) => {
+     captureAppError(error, {
+      area: "dragAndDrop",
+      action: "moveTaskStatus",
+      taskId,
+      statusKey,
+     });
+    });
    }
   },
   [moveTaskStatus],
