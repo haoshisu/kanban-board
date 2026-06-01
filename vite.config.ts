@@ -2,13 +2,27 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { visualizer } from "rollup-plugin-visualizer";
+import { sentryVitePlugin } from "@sentry/vite-plugin";
 
 const deferredHtmlPreloadChunks = ["BoardPage", "dnd-kit", "supabase"];
 
 // https://vite.dev/config/
 export default defineConfig({
- plugins: [react(), tailwindcss(), visualizer({ open: false })],
+ plugins: [
+  react(),
+  tailwindcss(),
+  visualizer({ open: false }),
+  sentryVitePlugin({
+   org: process.env.SENTRY_ORG,
+   project: process.env.SENTRY_PROJECT,
+   authToken: process.env.SENTRY_AUTH_TOKEN,
+   sourcemaps: {
+    filesToDeleteAfterUpload: ["dist/**/*.map"],
+   },
+  }),
+ ],
  build: {
+  sourcemap: true,
   modulePreload: {
    resolveDependencies(_url, deps, context) {
     if (context.hostType !== "html") {
