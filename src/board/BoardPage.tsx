@@ -179,27 +179,6 @@ export default function BoardPage({ userEmail, userId, onLogout }: BoardPageProp
   },
   [moveTaskStatus],
  );
- function SentryTestButton() {
-  const [shouldThrow, setShouldThrow] = useState(false);
-
-  if (shouldThrow) {
-   throw new Error("Sentry ErrorBoundary test");
-  }
-
-  if (!import.meta.env.DEV) {
-   return null;
-  }
-
-  return (
-   <button
-    className="rounded-md bg-red-600 px-3 py-2 text-sm font-semibold text-white"
-    onClick={() => setShouldThrow(true)}
-    type="button"
-   >
-    測試錯誤
-   </button>
-  );
- }
 
  return (
   <main className="min-h-screen bg-slate-100 px-4 py-6 text-slate-950 sm:px-6 lg:px-8">
@@ -209,7 +188,7 @@ export default function BoardPage({ userEmail, userId, onLogout }: BoardPageProp
       <div>
        <h1 className="mt-2 text-3xl font-bold tracking-normal text-slate-950">Board 管理</h1>
       </div>
-      <SentryTestButton />
+
       {userEmail && onLogout ? (
        <div className="flex items-center gap-3">
         <span className="text-sm text-slate-600">{userEmail}</span>
