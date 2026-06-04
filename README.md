@@ -50,6 +50,87 @@ e2e/            Playwright end-to-end tests
 public/         Static assets
 ```
 
+## Architecture Diagram
+
+```mermaid
+flowchart TB
+  Browser["Browser"]
+
+  subgraph Runtime["Client runtime"]
+    Main["main.tsx<br/>initSentry()<br/>Sentry.ErrorBoundary"]
+    App["App.tsx<br/>BrowserRouter<br/>Routes"]
+  end
+
+  subgraph RouteLayer["Route layer"]
+    LoginRoute["/login<br/>LoginPage"]
+    BoardRoute["/board<br/>ProtectedRoute"]
+    NotFoundRoute["*<br/>NotFoundPage"]
+  end
+
+  subgraph FeatureLayer["Feature modules"]
+    AuthHook["login/useAuth<br/>session + login/logout"]
+    BoardPage["board/BoardPage<br/>compose board + task workflows"]
+    BoardHook["board/useBoards<br/>board CRUD + selection"]
+    TaskHook["task/useTasks<br/>task CRUD + status moves"]
+    Dnd["dnd-kit<br/>drag end -> moveTaskStatus"]
+    BoardComponents["board/components"]
+    TaskComponents["task/components"]
+  end
+
+  subgraph DataLayer["Data layer"]
+    SupabaseClient["lib/supabase<br/>lazy Supabase client"]
+    LocalMode["lib/localDataMode<br/>kanban-board:e2e"]
+    LocalStorage["LocalStorage<br/>authStorage / boardStorage / taskStorage"]
+    Supabase["Supabase<br/>Auth + profiles + boards + tasks"]
+  end
+
+  subgraph ObservabilityLayer["Observability"]
+    ErrorReporting["lib/errorReporting<br/>captureAppError + setUser"]
+    Sentry["Sentry<br/>events + source maps"]
+    ErrorFallback["shared/ErrorFallback"]
+  end
+
+  Browser --> Main --> App
+  Main --> ErrorFallback
+  App --> LoginRoute
+  App --> BoardRoute
+  App --> NotFoundRoute
+  LoginRoute --> AuthHook
+  BoardRoute --> BoardPage
+  BoardPage --> BoardComponents
+  BoardPage --> TaskComponents
+  BoardPage --> BoardHook
+  BoardPage --> TaskHook
+  BoardPage --> Dnd
+  Dnd --> TaskHook
+  AuthHook --> SupabaseClient
+  BoardHook --> SupabaseClient
+  TaskHook --> SupabaseClient
+  SupabaseClient --> Supabase
+  AuthHook --> LocalMode
+  BoardHook --> LocalMode
+  TaskHook --> LocalMode
+  LocalMode --> LocalStorage
+  AuthHook --> ErrorReporting
+  BoardHook --> ErrorReporting
+  TaskHook --> ErrorReporting
+  SupabaseClient --> ErrorReporting
+  ErrorReporting --> Sentry
+  Main --> Sentry
+```
+
+## Technical Trade-offs
+
+| Choice                                             | Core Advantages (Pros)                                                                                                                                                                      | Potential Costs & Risks (Cons)                                                                                                                                                                                                                                 |
+| :------------------------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **React + Vite**                                   | Extremely fast local startup and Hot Module Replacement (HMR). Lightweight frontend configuration with high development autonomy.                                                           | Lacks built-in support found in full-stack frameworks (like Next.js). Route management, global state, and deployment workflows (e.g., SPA static routing redirects) must be manually integrated and configured by developers.                                  |
+| **Supabase (Auth & Database)**                     | Achieves a Serverless architecture, providing out-of-the-box Auth, PostgreSQL access, and auto-generated TypeScript types, drastically shortening the development lifecycle.                | Introduces Vendor Lock-in risks. Core data access patterns are tightly coupled with the platform, leading to a higher friction/pain period if migrating to a self-hosted backend or AWS in the future.                                                         |
+| **Domain-Driven (Feature-Based) Folder Structure** | Enhances code cohesion. Grouping components, hooks, types, and helpers by domains (e.g., board, task, login) makes features highly discoverable and easier to modify.                       | Shared logic across different modules becomes harder to identify at a glance. The team must maintain high discipline to refactor timely and extract shared code into `shared/` or `lib/` to prevent duplicate implementations.                                 |
+| **Centralizing Data Operations via Custom Hooks**  | Enforces separation of concerns. UI components focus purely on rendering, while complex asynchronous logic (Loading, Error, Optimistic Updates) is encapsulated within hooks.               | As business workflows grow highly complex, a single hook can easily become bloated and difficult to unit test due to handling both UI state and API data. In later stages, developers must consciously decouple pure logic, increasing refactoring time costs. |
+| **Optimistic UI Updates**                          | Significantly improves user experience. Operations like CRUD and kanban drag-and-drop receive instant visual feedback, eliminating perceived network latency.                               | Increases the complexity of frontend state management. If a backend write fails, additional robust rollback mechanisms and seamless error notifications must be carefully designed.                                                                            |
+| **LocalStorage E2E Mode (Playwright)**             | Decentralizes the testing environment. E2E tests run independently of real Supabase sessions or remote database states, drastically improving test stability and execution speed.           | The behavior of the mock persistence used in the test environment may not perfectly match the real production Supabase behavior, potentially missing certain edge cases.                                                                                       |
+| **Sentry Monitoring**                              | Establishes error tracking (Observability) in the production environment. Leverages Source Maps to un-minify compressed code, enabling precise production error localization and debugging. | Requires additional DSN configuration and handling source map uploads within the CI/CD pipeline, increasing the complexity of environmental variables management and build workflows.                                                                          |
+
 ## Observability
 
 The current Sentry setup is focused on production error visibility:
@@ -196,7 +277,88 @@ e2e/            Playwright end-to-end tests
 public/         靜態資源
 ```
 
-## Observability
+## 架構圖
+
+```mermaid
+flowchart TB
+  Browser["瀏覽器"]
+
+  subgraph Runtime["Client runtime"]
+    Main["main.tsx<br/>初始化 Sentry<br/>Sentry.ErrorBoundary"]
+    App["App.tsx<br/>BrowserRouter<br/>Routes"]
+  end
+
+  subgraph RouteLayer["路由層"]
+    LoginRoute["/login<br/>LoginPage"]
+    BoardRoute["/board<br/>ProtectedRoute"]
+    NotFoundRoute["*<br/>NotFoundPage"]
+  end
+
+  subgraph FeatureLayer["功能模組層"]
+    AuthHook["login/useAuth<br/>session + login/logout"]
+    BoardPage["board/BoardPage<br/>組合 board + task 流程"]
+    BoardHook["board/useBoards<br/>board CRUD + selection"]
+    TaskHook["task/useTasks<br/>task CRUD + status moves"]
+    Dnd["dnd-kit<br/>drag end -> moveTaskStatus"]
+    BoardComponents["board/components"]
+    TaskComponents["task/components"]
+  end
+
+  subgraph DataLayer["資料層"]
+    SupabaseClient["lib/supabase<br/>lazy Supabase client"]
+    LocalMode["lib/localDataMode<br/>kanban-board:e2e"]
+    LocalStorage["LocalStorage<br/>authStorage / boardStorage / taskStorage"]
+    Supabase["Supabase<br/>Auth + profiles + boards + tasks"]
+  end
+
+  subgraph ObservabilityLayer["觀測層"]
+    ErrorReporting["lib/errorReporting<br/>captureAppError + setUser"]
+    Sentry["Sentry<br/>events + source maps"]
+    ErrorFallback["shared/ErrorFallback"]
+  end
+
+  Browser --> Main --> App
+  Main --> ErrorFallback
+  App --> LoginRoute
+  App --> BoardRoute
+  App --> NotFoundRoute
+  LoginRoute --> AuthHook
+  BoardRoute --> BoardPage
+  BoardPage --> BoardComponents
+  BoardPage --> TaskComponents
+  BoardPage --> BoardHook
+  BoardPage --> TaskHook
+  BoardPage --> Dnd
+  Dnd --> TaskHook
+  AuthHook --> SupabaseClient
+  BoardHook --> SupabaseClient
+  TaskHook --> SupabaseClient
+  SupabaseClient --> Supabase
+  AuthHook --> LocalMode
+  BoardHook --> LocalMode
+  TaskHook --> LocalMode
+  LocalMode --> LocalStorage
+  AuthHook --> ErrorReporting
+  BoardHook --> ErrorReporting
+  TaskHook --> ErrorReporting
+  SupabaseClient --> ErrorReporting
+  ErrorReporting --> Sentry
+  Main --> Sentry
+```
+
+## 技術取捨
+
+| 選擇                                     | 核心優勢（原因）                                                                                                   | 潛在代價與風險                                                                                                                                                      |
+| :--------------------------------------- | :----------------------------------------------------------------------------------------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **React + Vite**                         | 本機啟動與熱更新（HMR）極快，前端配置輕量、開發自主性高。                                                          | 缺乏全端框架（如 Next.js）的內建支持，路由、狀態管理與部署流程（如 SPA 靜態重導向）需要開發者自行手動整合與配置。                                                   |
+| **Supabase (Auth & Database)**           | 實現 Serverless 架構，開箱即用 Auth、PostgreSQL 存取與自動生成的 TypeScript Types，大幅縮短開發週期。              | 會產生供應商鎖定（Vendor Lock-in）風險，核心資料存取與平台高度綁定，未來若要遷移至自建後端或 AWS 的陣痛期較高。                                                     |
+| **功能模組化資料夾結構 (Domain-Driven)** | 提高程式碼的凝聚性。將 board、task、login 的組件、hooks、types 集中在各自資料夾內，改動功能時非常好找。            | 跨模組的共用邏輯會變得比較難一眼識別，團隊需要保持高度紀律及時重構，將共用代碼抽離至 `shared/` 或 `lib/`，以防重複實作。                                            |
+| **客製化 Hooks 集中管理資料操作**        | 讓 UI 組件只專注於渲染畫面，將 Loading、Error、Optimistic Updates 等複雜的非同步處理邏輯封裝在 Hooks 中。          | 當業務流程高度複雜時，單一 Hook 容易因為同時處理「畫面狀態」與「後端 API 資料」而變得龐大且難以測試；專案中後期需要有意識地將純邏輯抽離出來，會增加重構的時間成本。 |
+| **樂觀更新 (Optimistic UI Updates)**     | 顯著提升使用者體驗。CRUD 與看板拖拉移動等操作能獲得即時的畫面回饋，消除網路延遲的卡頓感。                          | 增加了前端狀態管理的複雜度，當後端寫入失敗時，需要額外設計嚴密的狀態回滾（Rollback）機制與流暢的錯誤提示。                                                          |
+| **LocalStorage E2E Mode (Playwright)**   | 讓測試環境去中心化。E2E 測試不需依賴真實的 Supabase Session 或遠端資料庫狀態，大幅提升測試的穩定度與執行速度。     | 測試環境使用的 Mock 資料夾行為與 Production 環境的 Supabase 真實行為無法完全一致，可能漏掉部分極端邊界情況（Edge Cases）。                                          |
+| **Sentry 監控機制**                      | 建立 Production 環境的錯誤追蹤（Observability），結合 Source Maps 將壓縮代碼還原，實現精準的線上錯誤定位與 Debug。 | 需額外設定 DSN、處理 CI/CD 流程中的 Source Map 自動上傳與環境變數管理，會增加建置流程的複雜度。                                                                     |
+
+## 可觀測性
 
 目前的 Sentry 設定重點是 production error visibility：
 
