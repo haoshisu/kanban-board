@@ -4,6 +4,10 @@ A Kanban-style task management app built with React, TypeScript, Vite, TailwindC
 
 The project focuses on a practical board workflow: authenticated users can create boards, manage tasks, and move tasks across statuses with drag-and-drop interactions. It also includes a LocalStorage-backed data mode for stable end-to-end testing and frontend error monitoring for production debugging.
 
+Live demo: https://kanban-board-two-tan.vercel.app
+
+Demo account: `you@example.com` / `123`
+
 ## Features
 
 - Email/password login with Supabase Auth
@@ -211,6 +215,7 @@ npm run lint
 ### End-to-end tests
 
 ```bash
+npx playwright install
 npm run test:e2e
 ```
 
@@ -220,7 +225,7 @@ The Playwright tests enable local data mode by setting `kanban-board:e2e` in `lo
 
 The GitHub Actions workflow runs on pushes and pull requests targeting `main`.
 
-- `checks`: installs dependencies, runs ESLint, and builds the app.
+- `checks`: installs dependencies, runs ESLint, runs unit/integration tests, and builds the app.
 - `deploy`: runs on pushes to `main`, builds the Vercel production output, and deploys with the Vercel CLI.
 
 ---
@@ -230,6 +235,10 @@ The GitHub Actions workflow runs on pushes and pull requests targeting `main`.
 這是一個使用 React、TypeScript、Vite、TailwindCSS、dnd-kit、React Router、Supabase、Playwright 和 Sentry 建立的 Kanban 任務管理專案。
 
 專案重點是實作實用的看板工作流程：使用者登入後可以建立 board、管理 task，並透過拖拉操作更新 task 狀態。專案也提供 LocalStorage-backed data mode，讓 Playwright e2e 測試可以穩定執行，並加入前端錯誤監控，方便 production debugging。
+
+Demo：https://kanban-board-two-tan.vercel.app
+
+測試帳號: `you@example.com` / `123`
 
 ## 功能
 
@@ -438,6 +447,7 @@ npm run lint
 ### End-to-end 測試
 
 ```bash
+npx playwright install
 npm run test:e2e
 ```
 
@@ -447,5 +457,5 @@ Playwright 測試會在 `localStorage` 設定 `kanban-board:e2e`，讓測試改�
 
 GitHub Actions workflow 會在 push 和 pull request 目標為 `main` 時執行。
 
-- `checks`：安裝依賴、執行 ESLint、建置 app。
+- `checks`：安裝依賴、執行 ESLint、執行單元與整合測試、建置 app。
 - `deploy`：只在 push 到 `main` 時執行，使用 Vercel CLI 建置 production output 並部署。
