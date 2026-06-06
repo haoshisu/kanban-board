@@ -176,7 +176,7 @@ export default function BoardPage({ userEmail, userId, onLogout }: BoardPageProp
        <div className="flex items-center gap-3">
         <span className="text-sm text-slate-600">{userEmail}</span>
         <button
-         className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-100"
+         className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition hover:cursor-pointer hover:bg-slate-100"
          onClick={onLogout}
          type="button"
         >
@@ -260,7 +260,7 @@ export default function BoardPage({ userEmail, userId, onLogout }: BoardPageProp
         {creatingTaskStatus ? (
          <div className="mb-6">
           <div className="mb-3 flex items-center justify-between gap-3">
-           <h3 className="text-lg font-semibold text-slate-950">新增 task</h3>
+           <h3 className="text-lg font-semibold text-slate-950 hover:cursor-pointer">新增 task</h3>
            <span className="text-sm text-slate-500">{creatingTaskStatus.title}</span>
           </div>
           <TaskForm

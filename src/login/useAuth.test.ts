@@ -200,6 +200,7 @@ describe('useAuth local mode', () => {
     expect(loginResult).toEqual({
       success: false,
       message: '請輸入有效的 email',
+      type: 'email',
     })
     expect(saveAuthUserMock).not.toHaveBeenCalled()
     expect(result.current.currentUser).toBeNull()
@@ -223,6 +224,7 @@ describe('useAuth local mode', () => {
     expect(loginResult).toEqual({
       success: false,
       message: '請輸入密碼',
+      type: 'password',
     })
     expect(saveAuthUserMock).not.toHaveBeenCalled()
     expect(result.current.currentUser).toBeNull()
@@ -250,7 +252,7 @@ describe('useAuth local mode', () => {
       loggedInAt: fixedNow,
     }
 
-    expect(loginResult).toEqual({ success: true, message: '' })
+    expect(loginResult).toEqual({ success: true, message: '', type: '' })
     expect(saveAuthUserMock).toHaveBeenCalledWith(expectedUser)
     expect(setErrorReportingUserMock).toHaveBeenLastCalledWith(expectedUser)
     expect(result.current.currentUser).toEqual(expectedUser)
@@ -436,7 +438,7 @@ describe('useAuth Supabase mode', () => {
       email: 'you@example.com',
       password: 'password',
     })
-    expect(loginResult).toEqual({ success: true, message: '' })
+    expect(loginResult).toEqual({ success: true, message: '', type: '' })
     expect(result.current.currentUser).toEqual(expectedUser)
     expect(setErrorReportingUserMock).toHaveBeenLastCalledWith(expectedUser)
     expect(upsertMock).toHaveBeenCalledWith(
@@ -468,6 +470,7 @@ describe('useAuth Supabase mode', () => {
     expect(loginResult).toEqual({
       success: false,
       message: 'Invalid credentials',
+      type: '',
     })
     expect(result.current.currentUser).toBeNull()
   })
@@ -495,6 +498,7 @@ describe('useAuth Supabase mode', () => {
     expect(loginResult).toEqual({
       success: false,
       message: '登入時發生非預期錯誤，請稍後再試',
+      type: '',
     })
   })
 

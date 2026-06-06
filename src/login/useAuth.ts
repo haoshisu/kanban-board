@@ -8,10 +8,7 @@ import { clearAuthUser, loadAuthUser, saveAuthUser } from "./authStorage";
 import { getNameFromEmail, isValidEmail, mapAuthUser } from "./authUtils";
 import type { AuthUser, LoginInput, LoginResult } from "./types";
 
-const ensureProfile = async (
- supabase: SupabaseClient<Database>,
- user: AuthUser,
-) => {
+const ensureProfile = async (supabase: SupabaseClient<Database>, user: AuthUser) => {
  const { error } = await supabase.from("profiles").upsert(
   {
    id: user.id,
@@ -96,37 +93,39 @@ export const useAuth = () => {
 
   let unsubscribe: (() => void) | undefined;
 
-  void getSupabase().then((supabase) => {
-   if (!isMounted) {
-    return;
-   }
+  void getSupabase()
+   .then((supabase) => {
+    if (!isMounted) {
+     return;
+    }
 
-   const {
-    data: { subscription },
-   } = supabase.auth.onAuthStateChange((_event, session) => {
-  if (session?.user) {
-    const user = mapAuthUser(session.user);
-    setCurrentUser(user);
-    setErrorReportingUser(user);
-    void ensureProfile(supabase, user);
-   } else {
-    setCurrentUser(null);
-    setErrorReportingUser(null);
-   }
-   setIsLoading(false);
-  });
+    const {
+     data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+     if (session?.user) {
+      const user = mapAuthUser(session.user);
+      setCurrentUser(user);
+      setErrorReportingUser(user);
+      void ensureProfile(supabase, user);
+     } else {
+      setCurrentUser(null);
+      setErrorReportingUser(null);
+     }
+     setIsLoading(false);
+    });
 
-   unsubscribe = () => subscription.unsubscribe();
-  }).catch((error: unknown) => {
-   captureAppError(error, {
-    area: "auth",
-    action: "subscribeAuthState",
+    unsubscribe = () => subscription.unsubscribe();
+   })
+   .catch((error: unknown) => {
+    captureAppError(error, {
+     area: "auth",
+     action: "subscribeAuthState",
+    });
+
+    if (isMounted) {
+     setIsLoading(false);
+    }
    });
-
-   if (isMounted) {
-    setIsLoading(false);
-   }
-  });
 
   return () => {
    isMounted = false;
@@ -139,11 +138,11 @@ export const useAuth = () => {
   const password = input.password.trim();
 
   if (!isValidEmail(email)) {
-   return { success: false, message: "請輸入有效的 email" };
+   return { success: false, message: "請輸入有效的 email", type: "email" };
   }
 
   if (!password) {
-   return { success: false, message: "請輸入密碼" };
+   return { success: false, message: "請輸入密碼", type: "password" };
   }
 
   if (isLocalDataMode()) {
@@ -158,7 +157,7 @@ export const useAuth = () => {
    setCurrentUser(user);
    setErrorReportingUser(user);
 
-   return { success: true, message: "" };
+   return { success: true, message: "", type: "" };
   }
 
   let data;
@@ -182,6 +181,7 @@ export const useAuth = () => {
    return {
     success: false,
     message: "登入時發生非預期錯誤，請稍後再試",
+    type: "",
    };
   }
 
@@ -189,6 +189,7 @@ export const useAuth = () => {
    return {
     success: false,
     message: error.message || "登入失敗，請確認帳號或密碼",
+    type: "",
    };
   }
 
@@ -200,7 +201,7 @@ export const useAuth = () => {
    setErrorReportingUser(user);
   }
 
-  return { success: true, message: "" };
+  return { success: true, message: "", type: "" };
  };
 
  const logout = async () => {
