@@ -4,12 +4,12 @@ import { useCallback, useMemo, useState } from "react";
 import { BoardCard } from "./components/BoardCard";
 import { BoardForm } from "./components/BoardForm";
 import { EmptyState } from "./components/EmptyState";
+import { getValidDragMove, groupTasksByStatus } from "./boardPageUtils";
 import { useBoards } from "./useBoards";
 import { captureAppError } from "../lib/errorReporting";
 import { TaskForm, TaskStatusColumn, useTasks } from "../task";
 import type { Board } from "./types";
 import type { BoardStatus } from "./types";
-import type { BoardStatusKey } from "./types";
 import type { Task } from "../task";
 
 type BoardPageProps = {
@@ -86,18 +86,7 @@ export default function BoardPage({ userEmail, userId, onLogout }: BoardPageProp
  const [creatingTaskStatus, setCreatingTaskStatus] = useState<BoardStatus | null>(null);
  const [editingTask, setEditingTask] = useState<Task | null>(null);
 
- const tasksByStatus = useMemo(
-  () =>
-   tasks.reduce<Record<BoardStatusKey, Task[]>>(
-    (groupedTasks, task) => {
-     groupedTasks[task.statusKey].push(task);
-
-     return groupedTasks;
-    },
-    { todo: [], inProgress: [], done: [] },
-   ),
-  [tasks],
- );
+ const tasksByStatus = useMemo(() => groupTasksByStatus(tasks), [tasks]);
 
  const handleDeleteBoard = useCallback(
   async (board: Board) => {
@@ -156,17 +145,11 @@ export default function BoardPage({ userEmail, userId, onLogout }: BoardPageProp
     return;
    }
 
-   const sourceData = event.operation.source?.data as { taskId?: unknown } | undefined;
+   const dragMove = getValidDragMove(event);
 
-   const targetData = event.operation.target?.data as { statusKey?: unknown } | undefined;
+   if (dragMove) {
+    const { taskId, statusKey } = dragMove;
 
-   const taskId = sourceData?.taskId;
-   const statusKey = targetData?.statusKey;
-
-   if (
-    typeof taskId === "string" &&
-    (statusKey === "todo" || statusKey === "inProgress" || statusKey === "done")
-   ) {
     void moveTaskStatus(taskId, statusKey).catch((error: unknown) => {
      captureAppError(error, {
       area: "dragAndDrop",

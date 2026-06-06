@@ -7,20 +7,9 @@ import {
   loadBoards as loadStoredBoards,
   saveBoards,
 } from './boardStorage'
+import { mapBoardRow, normalizeBoardInput } from './boardUtils'
 import type { Board, BoardInput } from './types'
-
-type BoardRow = {
-  id: string
-  name: string
-  description: string | null
-  created_at: string
-  updated_at: string
-}
-
-const normalizeBoardInput = (input: BoardInput): BoardInput => ({
-  name: input.name.trim(),
-  description: input.description.trim(),
-})
+import type { BoardRow } from './boardUtils'
 
 const createOptimisticId = () => {
   if (crypto.randomUUID) {
@@ -29,15 +18,6 @@ const createOptimisticId = () => {
 
   return `${Date.now()}-${Math.random().toString(36).slice(2)}`
 }
-
-const mapBoardRow = (row: BoardRow): Board => ({
-  id: row.id,
-  name: row.name,
-  description: row.description ?? '',
-  statuses: defaultBoardStatuses,
-  createdAt: row.created_at,
-  updatedAt: row.updated_at,
-})
 
 export const useBoards = (ownerId: string | undefined) => {
   const [boards, setBoards] = useState<Board[]>([])

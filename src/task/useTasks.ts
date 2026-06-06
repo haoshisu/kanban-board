@@ -3,40 +3,15 @@ import { captureAppError } from '../lib/errorReporting'
 import { isLocalDataMode } from '../lib/localDataMode'
 import { getSupabase } from '../lib/supabase'
 import type { BoardStatusKey } from '../board'
-import type { Database } from '../lib/database.types'
 import { loadTasks as loadStoredTasks, saveTasks } from './taskStorage'
+import {
+  getNextPosition,
+  mapTaskRow,
+  normalizeTaskInput,
+  statusKeyToDbStatus,
+} from './taskUtils'
 import type { Task, TaskInput } from './types'
-
-type TaskStatus = Database['public']['Tables']['tasks']['Row']['status']
-
-type TaskRow = {
-  id: string
-  board_id: string
-  title: string
-  description: string | null
-  status: TaskStatus
-  position: number
-  created_at: string
-  updated_at: string
-}
-
-const statusKeyToDbStatus: Record<BoardStatusKey, TaskStatus> = {
-  todo: 'todo',
-  inProgress: 'in_progress',
-  done: 'done',
-}
-
-const dbStatusToStatusKey: Record<TaskStatus, BoardStatusKey> = {
-  todo: 'todo',
-  in_progress: 'inProgress',
-  done: 'done',
-}
-
-const normalizeTaskInput = (input: TaskInput): TaskInput => ({
-  title: input.title.trim(),
-  description: input.description.trim(),
-  statusKey: input.statusKey,
-})
+import type { TaskRow } from './taskUtils'
 
 const createOptimisticId = () => {
   if (crypto.randomUUID) {
@@ -44,25 +19,6 @@ const createOptimisticId = () => {
   }
 
   return `${Date.now()}-${Math.random().toString(36).slice(2)}`
-}
-
-const mapTaskRow = (row: TaskRow): Task => ({
-  id: row.id,
-  boardId: row.board_id,
-  title: row.title,
-  description: row.description ?? '',
-  statusKey: dbStatusToStatusKey[row.status],
-  position: row.position,
-  createdAt: row.created_at,
-  updatedAt: row.updated_at,
-})
-
-const getNextPosition = (tasks: Task[], statusKey: BoardStatusKey) => {
-  const positions = tasks
-    .filter((task) => task.statusKey === statusKey)
-    .map((task) => task.position)
-
-  return positions.length ? Math.max(...positions) + 1 : 0
 }
 
 export const useTasks = (boardId: string | null) => {

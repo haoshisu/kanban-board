@@ -16,6 +16,7 @@ const isTask = (value: unknown): value is Task => {
     typeof task.title === 'string' &&
     typeof task.description === 'string' &&
     typeof task.statusKey === 'string' &&
+    typeof task.position === 'number' &&
     typeof task.createdAt === 'string' &&
     typeof task.updatedAt === 'string'
   )

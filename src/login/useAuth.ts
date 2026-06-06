@@ -3,30 +3,10 @@ import { captureAppError, setErrorReportingUser } from "../lib/errorReporting";
 import { getSupabase } from "../lib/supabase";
 import { isLocalDataMode } from "../lib/localDataMode";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { User } from "@supabase/supabase-js";
 import type { Database } from "../lib/database.types";
 import { clearAuthUser, loadAuthUser, saveAuthUser } from "./authStorage";
+import { getNameFromEmail, isValidEmail, mapAuthUser } from "./authUtils";
 import type { AuthUser, LoginInput, LoginResult } from "./types";
-
-const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
-const getNameFromEmail = (email: string) => {
- const [name] = email.split("@");
-
- return name || email;
-};
-
-const mapAuthUser = (user: User): AuthUser => {
- const email = user.email ?? "";
-
- return {
-  id: user.id,
-  email,
-  name:
-   typeof user.user_metadata.name === "string" ? user.user_metadata.name : getNameFromEmail(email),
-  loggedInAt: user.last_sign_in_at ?? new Date().toISOString(),
- };
-};
 
 const ensureProfile = async (
  supabase: SupabaseClient<Database>,
@@ -158,7 +138,7 @@ export const useAuth = () => {
   const email = input.email.trim().toLowerCase();
   const password = input.password.trim();
 
-  if (!emailPattern.test(email)) {
+  if (!isValidEmail(email)) {
    return { success: false, message: "請輸入有效的 email" };
   }
 
