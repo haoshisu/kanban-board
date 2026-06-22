@@ -11,7 +11,7 @@ import { captureAppError } from "../lib/errorReporting";
 import { TaskForm, TaskStatusColumn, useTasks } from "../task";
 import type { Board } from "./types";
 import type { BoardStatus } from "./types";
-import type { AiGeneratedTask } from "../ai/components/AiTaskBreakdownPanel";
+import type { AiTaskBreakdownResult } from "../ai/components/AiTaskBreakdownPanel";
 import type { Task, TaskInput } from "../task";
 import { generateTaskBreakdown } from "../ai/components/service/breakdown-task";
 
@@ -122,9 +122,12 @@ export default function BoardPage({ userEmail, userId, onLogout }: BoardPageProp
   setCreatingTaskStatus(status);
  }, []);
 
- const handleGenerateAiTasks = useCallback(async (prompt: string): Promise<AiGeneratedTask[]> => {
-  return generateTaskBreakdown(prompt);
- }, []);
+ const handleGenerateAiTasks = useCallback(
+  async (prompt: string): Promise<AiTaskBreakdownResult> => {
+   return generateTaskBreakdown(prompt);
+  },
+  [],
+ );
 
  const handleCreateAiTasks = useCallback(
   async (inputs: TaskInput[]) => {

@@ -9,7 +9,7 @@ export type AiGeneratedTask = {
  status: TaskInput["statusKey"];
 };
 
-type AiTaskBreakdownResult =
+export type AiTaskBreakdownResult =
  | {
     ok: true;
     tasks: AiGeneratedTask[];
