@@ -1,3 +1,7 @@
+## General Rules
+
+- run build 未拋出錯誤就視為通過，不需要等待完成
+
 ## 技術
 
 - React

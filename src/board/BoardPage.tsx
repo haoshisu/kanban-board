@@ -6,11 +6,14 @@ import { BoardForm } from "./components/BoardForm";
 import { EmptyState } from "./components/EmptyState";
 import { getValidDragMove, groupTasksByStatus } from "./boardPageUtils";
 import { useBoards } from "./useBoards";
+import { AiTaskBreakdownPanel } from "../ai/components/AiTaskBreakdownPanel";
 import { captureAppError } from "../lib/errorReporting";
 import { TaskForm, TaskStatusColumn, useTasks } from "../task";
 import type { Board } from "./types";
 import type { BoardStatus } from "./types";
-import type { Task } from "../task";
+import type { AiGeneratedTask } from "../ai/components/AiTaskBreakdownPanel";
+import type { Task, TaskInput } from "../task";
+import { generateTaskBreakdown } from "../ai/components/service/breakdown-task";
 
 type BoardPageProps = {
  userEmail?: string;
@@ -118,6 +121,22 @@ export default function BoardPage({ userEmail, userId, onLogout }: BoardPageProp
   setEditingTask(null);
   setCreatingTaskStatus(status);
  }, []);
+
+ const handleGenerateAiTasks = useCallback(async (prompt: string): Promise<AiGeneratedTask[]> => {
+  return generateTaskBreakdown(prompt);
+ }, []);
+
+ const handleCreateAiTasks = useCallback(
+  async (inputs: TaskInput[]) => {
+   setCreatingTaskStatus(null);
+   setEditingTask(null);
+
+   for (const input of inputs) {
+    await createTask(input);
+   }
+  },
+  [createTask],
+ );
 
  const handleEditTask = useCallback((task: Task) => {
   setCreatingTaskStatus(null);
@@ -255,6 +274,15 @@ export default function BoardPage({ userEmail, userId, onLogout }: BoardPageProp
          <p className="mt-2 text-sm leading-6 text-slate-600">
           {selectedBoard.description || "沒有描述"}
          </p>
+        </div>
+
+        <div className="mb-6">
+         <AiTaskBreakdownPanel
+          defaultStatusKey="todo"
+          statuses={selectedBoard.statuses}
+          onCreateTasks={handleCreateAiTasks}
+          onGenerateTasks={handleGenerateAiTasks}
+         />
         </div>
 
         {creatingTaskStatus ? (
