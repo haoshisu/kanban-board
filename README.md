@@ -1,8 +1,8 @@
 # Kanban Board
 
-A Kanban-style task management app built with React, TypeScript, Vite, TailwindCSS, dnd-kit, React Router, Supabase, Playwright, and Sentry.
+A Kanban-style task management app built with React, TypeScript, Vite, TailwindCSS, dnd-kit, React Router, Supabase, Gemini, Playwright, and Sentry.
 
-The project focuses on a practical board workflow: authenticated users can create boards, manage tasks, and move tasks across statuses with drag-and-drop interactions. It also includes a LocalStorage-backed data mode for stable end-to-end testing and frontend error monitoring for production debugging.
+The project focuses on a practical board workflow: authenticated users can create boards, use AI to break a requirement into tasks, manage tasks, and move tasks across statuses with drag-and-drop interactions. It also includes a LocalStorage-backed data mode for stable end-to-end testing and frontend error monitoring for production debugging.
 
 Live demo: https://kanban-board-two-tan.vercel.app
 
@@ -14,6 +14,7 @@ Demo account: `you@example.com` / `123`
 - Protected board route with React Router v7
 - Board CRUD: create, edit, delete, and select boards
 - Task CRUD: create, edit, delete, and move tasks between statuses
+- AI task breakdown with selectable task suggestions before bulk creation
 - Drag-and-drop task status updates with dnd-kit
 - Optimistic UI updates for faster perceived interactions
 - Supabase persistence for boards, tasks, and user profiles
@@ -32,6 +33,7 @@ Demo account: `you@example.com` / `123`
 - dnd-kit
 - React Router v7
 - Supabase
+- Gemini API through a Supabase Edge Function
 - Sentry
 - Playwright
 - ESLint
@@ -43,6 +45,7 @@ Demo account: `you@example.com` / `123`
 ```txt
 src/
   404/          Not found route
+  ai/           AI task breakdown UI and Edge Function client
   board/        Board page, board hooks, board components, board storage
   lib/          Supabase client, Sentry setup, error reporting, database types
   login/        Auth hooks, login page, local auth storage
@@ -79,6 +82,7 @@ flowchart TB
     Dnd["dnd-kit<br/>drag end -> moveTaskStatus"]
     BoardComponents["board/components"]
     TaskComponents["task/components"]
+    AiBreakdown["ai/AiTaskBreakdownPanel<br/>review + select suggestions"]
   end
 
   subgraph DataLayer["Data layer"]
@@ -86,6 +90,8 @@ flowchart TB
     LocalMode["lib/localDataMode<br/>kanban-board:e2e"]
     LocalStorage["LocalStorage<br/>authStorage / boardStorage / taskStorage"]
     Supabase["Supabase<br/>Auth + profiles + boards + tasks"]
+    EdgeFunction["Supabase Edge Function<br/>breakdown-task"]
+    Gemini["Gemini API"]
   end
 
   subgraph ObservabilityLayer["Observability"]
@@ -106,6 +112,8 @@ flowchart TB
   BoardPage --> BoardHook
   BoardPage --> TaskHook
   BoardPage --> Dnd
+  BoardPage --> AiBreakdown
+  AiBreakdown --> EdgeFunction --> Gemini
   Dnd --> TaskHook
   AuthHook --> SupabaseClient
   BoardHook --> SupabaseClient
@@ -153,6 +161,7 @@ The current Sentry setup is focused on production error visibility:
 - Node.js
 - npm
 - A Supabase project
+- A deployed Supabase Edge Function named `breakdown-task` with its Gemini API key configured as a server-side secret
 
 ### Install dependencies
 
@@ -172,6 +181,8 @@ VITE_SENTRY_DSN=your_sentry_frontend_dsn
 
 `VITE_SENTRY_DSN` is optional for local development. Without it, Sentry will not send events.
 
+The browser invokes the `breakdown-task` Supabase Edge Function. Keep the Gemini API key in the Edge Function environment and do not expose it through a `VITE_` environment variable.
+
 For production source map uploads, the build environment also needs:
 
 ```bash
@@ -187,6 +198,12 @@ The app expects these Supabase tables:
 - `tasks`
 
 The generated type definitions are stored in `src/lib/database.types.ts`.
+
+### Use AI task breakdown
+
+1. Select a board and enter a requirement in the **AI task breakdown** panel.
+2. Generate suggestions, review them, and deselect any tasks you do not want.
+3. Create the selected suggestions in the current board. Generated tasks default to the `todo` status unless the AI response specifies another valid board status.
 
 ### Run locally
 
@@ -232,9 +249,9 @@ The GitHub Actions workflow runs on pushes and pull requests targeting `main`.
 
 # Kanban Board 中文說明
 
-這是一個使用 React、TypeScript、Vite、TailwindCSS、dnd-kit、React Router、Supabase、Playwright 和 Sentry 建立的 Kanban 任務管理專案。
+這是一個使用 React、TypeScript、Vite、TailwindCSS、dnd-kit、React Router、Supabase、Gemini、Playwright 和 Sentry 建立的 Kanban 任務管理專案。
 
-專案重點是實作實用的看板工作流程：使用者登入後可以建立 board、管理 task，並透過拖拉操作更新 task 狀態。專案也提供 LocalStorage-backed data mode，讓 Playwright e2e 測試可以穩定執行，並加入前端錯誤監控，方便 production debugging。
+專案重點是實作實用的看板工作流程：使用者登入後可以建立 board、透過 AI 將需求拆成 tasks、管理 task，並透過拖拉操作更新 task 狀態。專案也提供 LocalStorage-backed data mode，讓 Playwright e2e 測試可以穩定執行，並加入前端錯誤監控，方便 production debugging。
 
 Demo：https://kanban-board-two-tan.vercel.app
 
@@ -246,6 +263,7 @@ Demo：https://kanban-board-two-tan.vercel.app
 - 使用 React Router v7 實作受保護的 board 頁面
 - Board CRUD：建立、編輯、刪除、切換 board
 - Task CRUD：建立、編輯、刪除、移動 task 狀態
+- 使用 AI 拆解需求，確認並勾選建議項目後批次建立 tasks
 - 使用 dnd-kit 實作拖拉更新 task 狀態
 - 使用 optimistic UI update 提升操作回饋速度
 - 使用 Supabase 儲存 profiles、boards 與 tasks
@@ -264,6 +282,7 @@ Demo：https://kanban-board-two-tan.vercel.app
 - dnd-kit
 - React Router v7
 - Supabase
+- 透過 Supabase Edge Function 串接 Gemini API
 - Sentry
 - Playwright
 - ESLint
@@ -275,6 +294,7 @@ Demo：https://kanban-board-two-tan.vercel.app
 ```txt
 src/
   404/          404 頁面
+  ai/           AI 拆任務 UI 與 Edge Function client
   board/        Board 頁面、hooks、components、storage
   lib/          Supabase client、Sentry 設定、error reporting、資料庫型別
   login/        Auth hooks、登入頁、local auth storage
@@ -311,6 +331,7 @@ flowchart TB
     Dnd["dnd-kit<br/>drag end -> moveTaskStatus"]
     BoardComponents["board/components"]
     TaskComponents["task/components"]
+    AiBreakdown["ai/AiTaskBreakdownPanel<br/>確認與勾選建議"]
   end
 
   subgraph DataLayer["資料層"]
@@ -318,6 +339,8 @@ flowchart TB
     LocalMode["lib/localDataMode<br/>kanban-board:e2e"]
     LocalStorage["LocalStorage<br/>authStorage / boardStorage / taskStorage"]
     Supabase["Supabase<br/>Auth + profiles + boards + tasks"]
+    EdgeFunction["Supabase Edge Function<br/>breakdown-task"]
+    Gemini["Gemini API"]
   end
 
   subgraph ObservabilityLayer["觀測層"]
@@ -338,6 +361,8 @@ flowchart TB
   BoardPage --> BoardHook
   BoardPage --> TaskHook
   BoardPage --> Dnd
+  BoardPage --> AiBreakdown
+  AiBreakdown --> EdgeFunction --> Gemini
   Dnd --> TaskHook
   AuthHook --> SupabaseClient
   BoardHook --> SupabaseClient
@@ -385,6 +410,7 @@ flowchart TB
 - Node.js
 - npm
 - Supabase project
+- 已部署名為 `breakdown-task` 的 Supabase Edge Function，並在 server-side secret 設定 Gemini API key
 
 ### 安裝依賴
 
@@ -404,6 +430,8 @@ VITE_SENTRY_DSN=your_sentry_frontend_dsn
 
 `VITE_SENTRY_DSN` 對本機開發是選填；沒有設定時，Sentry 不會送出事件。
 
+瀏覽器會呼叫 Supabase 的 `breakdown-task` Edge Function。Gemini API key 必須存放在 Edge Function 環境中，不可透過 `VITE_` 環境變數暴露給瀏覽器。
+
 若 production build 需要上傳 source maps，build 環境也需要：
 
 ```bash
@@ -419,6 +447,12 @@ SENTRY_PROJECT=your_sentry_project_slug
 - `tasks`
 
 產生出的資料庫型別放在 `src/lib/database.types.ts`。
+
+### 使用 AI 拆任務
+
+1. 選擇 board，在「AI 拆任務」區塊輸入要拆解的需求。
+2. 產生建議後檢查內容，取消勾選不需要的 tasks。
+3. 將選取的建議批次加入目前的 board。若 AI 未回傳有效的 board 狀態，task 會預設建立在 `todo`。
 
 ### 本機開發
 
