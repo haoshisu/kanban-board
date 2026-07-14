@@ -6,13 +6,16 @@ import { BoardForm } from "./components/BoardForm";
 import { EmptyState } from "./components/EmptyState";
 import { getValidDragMove, groupTasksByStatus } from "./boardPageUtils";
 import { useBoards } from "./useBoards";
+import { AiBoardSummaryPanel } from "../ai/components/AiBoardSummaryPanel";
 import { AiTaskBreakdownPanel } from "../ai/components/AiTaskBreakdownPanel";
 import { captureAppError } from "../lib/errorReporting";
 import { TaskForm, TaskStatusColumn, useTasks } from "../task";
 import type { Board } from "./types";
 import type { BoardStatus } from "./types";
+import type { AiBoardSummaryResult } from "../ai/components/AiBoardSummaryPanel";
 import type { AiTaskBreakdownResult } from "../ai/components/AiTaskBreakdownPanel";
 import type { Task, TaskInput } from "../task";
+import { generateBoardSummary } from "../ai/components/service/summarize-board";
 import { generateTaskBreakdown } from "../ai/components/service/breakdown-task";
 
 type BoardPageProps = {
@@ -125,6 +128,13 @@ export default function BoardPage({ userEmail, userId, onLogout }: BoardPageProp
  const handleGenerateAiTasks = useCallback(
   async (prompt: string): Promise<AiTaskBreakdownResult> => {
    return generateTaskBreakdown(prompt);
+  },
+  [],
+ );
+
+ const handleGenerateBoardSummary = useCallback(
+  async (board: Board, boardTasks: Task[]): Promise<AiBoardSummaryResult> => {
+   return generateBoardSummary(board, boardTasks);
   },
   [],
  );
@@ -279,7 +289,13 @@ export default function BoardPage({ userEmail, userId, onLogout }: BoardPageProp
          </p>
         </div>
 
-        <div className="mb-6">
+        <div className="mb-6 space-y-6">
+         <AiBoardSummaryPanel
+          board={selectedBoard}
+          tasks={tasks}
+          onGenerateSummary={handleGenerateBoardSummary}
+         />
+
          <AiTaskBreakdownPanel
           defaultStatusKey="todo"
           statuses={selectedBoard.statuses}
