@@ -90,6 +90,8 @@ const createBoardFromUi = async (
   name: string,
   description = `${name} description`,
 ) => {
+  await user.click(screen.getByRole('button', { name: '+ 新增 Board' }))
+
   const form = getBoardForm('建立 board')
 
   await user.clear(within(form).getByLabelText('Board 名稱'))
