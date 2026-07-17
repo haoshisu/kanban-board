@@ -7,10 +7,10 @@ type LoginPageProps = {
 };
 
 const inputBaseClassName =
- "mt-2 w-full rounded-md border bg-white px-3 py-2.5 text-sm text-slate-900 outline-none transition duration-200 placeholder:text-slate-400 focus:-translate-y-px disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-500 disabled:focus:translate-y-0";
+ "mt-2 w-full rounded-[5px] border bg-card px-3 py-2.5 text-sm text-ink outline-none transition duration-200 placeholder:text-ink-muted focus:-translate-y-px disabled:cursor-not-allowed disabled:bg-ink-muted/10 disabled:text-ink-muted disabled:focus:translate-y-0";
 
 const featureCardClassName =
- "rounded-lg border border-slate-200 bg-white/70 p-4 transition duration-200 motion-safe:hover:-translate-y-0.5 hover:border-slate-300 hover:bg-white hover:shadow-sm";
+ "rounded-lg border border-ink-muted/30 bg-card/70 p-4 transition duration-200 motion-safe:hover:-translate-y-0.5 hover:border-ink-muted/50 hover:bg-card";
 
 export default function LoginPage({ onLogin }: LoginPageProps) {
  const [email, setEmail] = useState("");
@@ -35,48 +35,50 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
  };
 
  return (
-  <main className="min-h-screen bg-slate-100 px-4 py-8 text-slate-950 sm:px-6 lg:px-8">
+  <main className="min-h-screen bg-paper px-4 py-8 text-ink sm:px-6 lg:px-8">
    <section className="mx-auto grid min-h-[calc(100vh-4rem)] w-full max-w-6xl items-center gap-8 lg:grid-cols-[1fr_440px] lg:gap-14">
     <div className="space-y-8">
      <div>
-      <p className="text-sm font-semibold uppercase tracking-normal text-slate-500">Kanban Board</p>
-      <p className="mt-4 max-w-xl text-4xl font-bold tracking-normal text-slate-950 sm:text-5xl">
+      <p className="font-display text-sm font-semibold uppercase tracking-widest text-ink-muted">
+       Kanban Board
+      </p>
+      <p className="mt-4 max-w-xl font-display text-4xl font-bold tracking-tight text-ink sm:text-5xl">
        讓工作狀態保持清楚、安靜、可掌握。
       </p>
-      <p className="mt-4 max-w-lg text-base leading-7 text-slate-600">
+      <p className="mt-4 max-w-lg text-base leading-7 text-ink-muted">
        登入後即可管理 board、整理 task，並用拖拉方式更新每件事的進度。
       </p>
      </div>
 
      <div className="grid max-w-xl gap-3 sm:grid-cols-3">
       <div className={featureCardClassName}>
-       <p className="text-sm font-semibold text-slate-900">Boards</p>
-       <p className="mt-2 text-sm leading-6 text-slate-600">集中管理不同工作流程。</p>
+       <p className="font-display text-sm font-semibold uppercase tracking-wide text-ink">Boards</p>
+       <p className="mt-2 text-sm leading-6 text-ink-muted">集中管理不同工作流程。</p>
       </div>
       <div className={featureCardClassName}>
-       <p className="text-sm font-semibold text-slate-900">Tasks</p>
-       <p className="mt-2 text-sm leading-6 text-slate-600">快速記錄與追蹤待辦。</p>
+       <p className="font-display text-sm font-semibold uppercase tracking-wide text-ink">Tasks</p>
+       <p className="mt-2 text-sm leading-6 text-ink-muted">快速記錄與追蹤待辦。</p>
       </div>
       <div className={featureCardClassName}>
-       <p className="text-sm font-semibold text-slate-900">Flow</p>
-       <p className="mt-2 text-sm leading-6 text-slate-600">拖拉任務更新狀態。</p>
+       <p className="font-display text-sm font-semibold uppercase tracking-wide text-ink">Flow</p>
+       <p className="mt-2 text-sm leading-6 text-ink-muted">拖拉任務更新狀態。</p>
       </div>
      </div>
     </div>
 
     <form
-     className="w-full rounded-lg border border-slate-200 bg-white p-5 shadow-sm transition duration-300 hover:shadow-md sm:p-6"
+     className="w-full rounded-lg border border-ink-muted/40 bg-card p-5 transition duration-300 sm:p-6"
      onSubmit={handleSubmit}
     >
      <div className="mb-6">
-      <p className="text-sm font-medium text-slate-500">歡迎回來</p>
-      <h1 className="mt-2 text-3xl font-bold tracking-normal text-slate-950">登入</h1>
-      <p className="mt-2 text-sm leading-6 text-slate-600">使用你的 email 與密碼進入工作看板。</p>
+      <p className="text-sm font-medium text-ink-muted">歡迎回來</p>
+      <h1 className="mt-2 font-display text-3xl font-bold uppercase tracking-wide text-ink">登入</h1>
+      <p className="mt-2 text-sm leading-6 text-ink-muted">使用你的 email 與密碼進入工作看板。</p>
      </div>
 
      <div className="space-y-5">
       <div>
-       <label className="text-sm font-medium text-slate-700" htmlFor="login-email">
+       <label className="text-sm font-medium text-ink" htmlFor="login-email">
         Email
        </label>
        <input
@@ -85,8 +87,8 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
         autoComplete="email"
         className={`${inputBaseClassName} ${
          error?.type === "email"
-          ? "border-red-300 ring-2 ring-red-100 focus:border-red-500 focus:ring-red-100"
-          : "border-slate-300 focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
+          ? "border-error ring-2 ring-error/20 focus:border-error focus:ring-error/20"
+          : "border-ink-muted/50 focus:border-stamp-todo focus:ring-2 focus:ring-stamp-todo/30"
         }`}
         disabled={isSubmitting}
         id="login-email"
@@ -98,7 +100,7 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
       </div>
 
       <div>
-       <label className="text-sm font-medium text-slate-700" htmlFor="login-password">
+       <label className="text-sm font-medium text-ink" htmlFor="login-password">
         密碼
        </label>
        <input
@@ -107,8 +109,8 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
         autoComplete="current-password"
         className={`${inputBaseClassName} ${
          error?.type === "password"
-          ? "border-red-300 ring-2 ring-red-100 focus:border-red-500 focus:ring-red-100"
-          : "border-slate-300 focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
+          ? "border-error ring-2 ring-error/20 focus:border-error focus:ring-error/20"
+          : "border-ink-muted/50 focus:border-stamp-todo focus:ring-2 focus:ring-stamp-todo/30"
         }`}
         disabled={isSubmitting}
         id="login-password"
@@ -121,7 +123,7 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
 
       {error ? (
        <p
-        className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-700"
+        className="rounded-[5px] border border-error bg-error/10 px-3 py-2 text-sm font-medium text-error"
         id="login-error"
         role="alert"
        >
@@ -130,14 +132,14 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
       ) : null}
 
       <button
-       className="flex w-full items-center justify-center gap-2 rounded-md bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white transition duration-200 hover:cursor-pointer hover:bg-slate-700 active:translate-y-px focus:outline-none focus:ring-2 focus:ring-slate-300 focus:ring-offset-2 disabled:cursor-not-allowed disabled:bg-slate-400 disabled:active:translate-y-0"
+       className="flex w-full items-center justify-center gap-2 rounded-[5px] bg-stamp-todo px-4 py-2.5 font-display text-sm font-semibold uppercase tracking-wide text-card transition duration-200 hover:cursor-pointer hover:bg-stamp-todo/90 active:translate-y-px focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-stamp-todo disabled:cursor-not-allowed disabled:bg-ink-muted/50 disabled:active:translate-y-0"
        disabled={isSubmitting}
        type="submit"
       >
        {isSubmitting ? (
         <span
          aria-hidden="true"
-         className="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white"
+         className="h-4 w-4 animate-spin rounded-full border-2 border-card/40 border-t-card"
         />
        ) : null}
        {isSubmitting ? "登入中..." : "登入"}

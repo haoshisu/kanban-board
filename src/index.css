@@ -1,1 +1,42 @@
 @import "tailwindcss";
+
+@theme {
+  --color-paper: #DCD3BE;
+  --color-card: #FBF8F1;
+  --color-ink: #2B2620;
+  --color-ink-muted: #7A7263;
+  --color-stamp-todo: #2B4C7E;
+  --color-stamp-doing: #C08A28;
+  --color-stamp-done: #5C7A5A;
+  --color-error: #B5432A;
+
+  --font-display: "IBM Plex Mono", ui-monospace, "Cascadia Mono", monospace;
+  --font-body: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+}
+
+@layer base {
+  body {
+    @apply bg-paper text-ink font-body antialiased;
+  }
+}
+
+@keyframes stamp-in {
+  0% {
+    transform: rotate(0deg) scale(1.35);
+    opacity: 0;
+  }
+  60% {
+    transform: rotate(-4deg) scale(0.94);
+    opacity: 1;
+  }
+  100% {
+    transform: rotate(-3deg) scale(1);
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .animate-stamp-in {
+    animation: stamp-in 220ms ease-out;
+  }
+}

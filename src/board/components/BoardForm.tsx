@@ -1,5 +1,13 @@
 import { useId, useState } from "react";
 import type { FormEvent } from "react";
+import {
+ formCardClassName,
+ formErrorClassName,
+ formFieldLabelClassName,
+ formInputClassName,
+ primaryButtonClassName,
+ secondaryButtonClassName,
+} from "../../shared/formStyles";
 import type { Board, BoardInput } from "../types";
 
 type BoardFormProps = {
@@ -43,17 +51,14 @@ export function BoardForm({ board, submitLabel, onSubmit, onCancel }: BoardFormP
  };
 
  return (
-  <form
-   className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm"
-   onSubmit={handleSubmit}
-  >
+  <form className={formCardClassName} onSubmit={handleSubmit}>
    <div className="space-y-4">
     <div>
-     <label className="text-sm font-medium text-slate-700" htmlFor={nameId}>
+     <label className={formFieldLabelClassName} htmlFor={nameId}>
       Board 名稱
      </label>
      <input
-      className="mt-2 w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
+      className={formInputClassName}
       disabled={isSubmitting}
       id={nameId}
       onChange={(event) => setName(event.target.value)}
@@ -64,11 +69,11 @@ export function BoardForm({ board, submitLabel, onSubmit, onCancel }: BoardFormP
     </div>
 
     <div>
-     <label className="text-sm font-medium text-slate-700" htmlFor={descriptionId}>
+     <label className={formFieldLabelClassName} htmlFor={descriptionId}>
       描述
      </label>
      <textarea
-      className="mt-2 min-h-24 w-full resize-none rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
+      className={`min-h-24 resize-none ${formInputClassName}`}
       disabled={isSubmitting}
       id={descriptionId}
       onChange={(event) => setDescription(event.target.value)}
@@ -77,19 +82,15 @@ export function BoardForm({ board, submitLabel, onSubmit, onCancel }: BoardFormP
      />
     </div>
 
-    {error ? <p className="text-sm text-red-600">{error}</p> : null}
+    {error ? <p className={formErrorClassName}>{error}</p> : null}
 
     <div className="flex flex-col gap-2 sm:flex-row">
-     <button
-      className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-700 hover:cursor-pointer disabled:cursor-not-allowed disabled:bg-slate-400"
-      disabled={isSubmitting}
-      type="submit"
-     >
+     <button className={primaryButtonClassName} disabled={isSubmitting} type="submit">
       {isSubmitting ? "處理中..." : submitLabel}
      </button>
      {onCancel ? (
       <button
-       className="rounded-md border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-100"
+       className={secondaryButtonClassName}
        disabled={isSubmitting}
        onClick={onCancel}
        type="button"
