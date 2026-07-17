@@ -5,7 +5,7 @@ import { BoardCard } from "./components/BoardCard";
 import { BoardForm } from "./components/BoardForm";
 import { EmptyState } from "./components/EmptyState";
 import { getValidDragMove, groupTasksByStatus } from "./boardPageUtils";
-import { primaryButtonClassName } from "../shared/formStyles";
+import { primaryButtonClassName, secondaryButtonClassName } from "../shared/formStyles";
 import { Modal } from "../shared/components/Modal";
 import { statusStyles } from "../shared/statusStyles";
 import { useBoards } from "./useBoards";
@@ -96,6 +96,7 @@ export default function BoardPage({ userEmail, userId, onLogout }: BoardPageProp
  const [editingBoard, setEditingBoard] = useState<Board | null>(null);
  const [creatingTaskStatus, setCreatingTaskStatus] = useState<BoardStatus | null>(null);
  const [editingTask, setEditingTask] = useState<Task | null>(null);
+ const [isAiPanelOpen, setIsAiPanelOpen] = useState(false);
 
  const tasksByStatus = useMemo(() => groupTasksByStatus(tasks), [tasks]);
 
@@ -156,6 +157,8 @@ export default function BoardPage({ userEmail, userId, onLogout }: BoardPageProp
    for (const input of inputs) {
     await createTask(input);
    }
+
+   setIsAiPanelOpen(false);
   },
   [createTask],
  );
@@ -324,23 +327,35 @@ export default function BoardPage({ userEmail, userId, onLogout }: BoardPageProp
 
       {selectedBoard ? (
        <div className="rounded-lg border border-ink-muted/40 bg-card p-4 sm:p-6">
-        <div className="mb-6">
-         <h2 className="font-display text-2xl font-bold uppercase tracking-wide text-ink">
-          {selectedBoard.name}
-         </h2>
-         <p className="mt-2 text-sm leading-6 text-ink-muted">
-          {selectedBoard.description || "沒有描述"}
-         </p>
+        <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+         <div>
+          <h2 className="font-display text-2xl font-bold uppercase tracking-wide text-ink">
+           {selectedBoard.name}
+          </h2>
+          <p className="mt-2 text-sm leading-6 text-ink-muted">
+           {selectedBoard.description || "沒有描述"}
+          </p>
+         </div>
+
+         <button
+          className={isAiPanelOpen ? secondaryButtonClassName : primaryButtonClassName}
+          onClick={() => setIsAiPanelOpen((isOpen) => !isOpen)}
+          type="button"
+         >
+          {isAiPanelOpen ? "關閉 AI 拆任務" : "AI 拆任務"}
+         </button>
         </div>
 
-        <div className="mb-6">
-         <AiTaskBreakdownPanel
-          defaultStatusKey="todo"
-          statuses={selectedBoard.statuses}
-          onCreateTasks={handleCreateAiTasks}
-          onGenerateTasks={handleGenerateAiTasks}
-         />
-        </div>
+        {isAiPanelOpen ? (
+         <div className="mb-6">
+          <AiTaskBreakdownPanel
+           defaultStatusKey="todo"
+           statuses={selectedBoard.statuses}
+           onCreateTasks={handleCreateAiTasks}
+           onGenerateTasks={handleGenerateAiTasks}
+          />
+         </div>
+        ) : null}
 
         {creatingTaskStatus ? (
          <Modal
