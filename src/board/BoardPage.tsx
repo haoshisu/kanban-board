@@ -5,6 +5,8 @@ import { BoardCard } from "./components/BoardCard";
 import { BoardForm } from "./components/BoardForm";
 import { EmptyState } from "./components/EmptyState";
 import { getValidDragMove, groupTasksByStatus } from "./boardPageUtils";
+import { primaryButtonClassName } from "../shared/formStyles";
+import { Modal } from "../shared/components/Modal";
 import { statusStyles } from "../shared/statusStyles";
 import { useBoards } from "./useBoards";
 import { AiTaskBreakdownPanel } from "../ai/components/AiTaskBreakdownPanel";
@@ -41,7 +43,7 @@ function BoardListSkeleton() {
 
 function TaskColumnsSkeleton({ statuses }: { statuses: BoardStatus[] }) {
  return (
-  <div aria-label="載入 tasks" className="grid gap-4 md:grid-cols-3">
+  <div aria-label="載入 tasks" className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
    {statuses.map((status) => (
     <section
      className="min-h-52 rounded-lg border border-ink-muted/30 bg-card/50 p-4"
@@ -90,6 +92,7 @@ export default function BoardPage({ userEmail, userId, onLogout }: BoardPageProp
   moveTaskStatus,
   deleteTasksByBoard,
  } = useTasks(selectedBoard?.id ?? null);
+ const [isCreatingBoard, setIsCreatingBoard] = useState(false);
  const [editingBoard, setEditingBoard] = useState<Board | null>(null);
  const [creatingTaskStatus, setCreatingTaskStatus] = useState<BoardStatus | null>(null);
  const [editingTask, setEditingTask] = useState<Task | null>(null);
@@ -115,12 +118,23 @@ export default function BoardPage({ userEmail, userId, onLogout }: BoardPageProp
  const handleSelectBoard = useCallback(
   (id: string) => {
    selectBoard(id);
+   setIsCreatingBoard(false);
    setEditingBoard(null);
    setCreatingTaskStatus(null);
    setEditingTask(null);
   },
   [selectBoard],
  );
+
+ const handleStartCreateBoard = useCallback(() => {
+  setEditingBoard(null);
+  setIsCreatingBoard(true);
+ }, []);
+
+ const handleStartEditBoard = useCallback((board: Board) => {
+  setIsCreatingBoard(false);
+  setEditingBoard(board);
+ }, []);
 
  const handleCreateTask = useCallback((status: BoardStatus) => {
   setEditingTask(null);
@@ -216,10 +230,8 @@ export default function BoardPage({ userEmail, userId, onLogout }: BoardPageProp
      </div>
     </header>
 
-    <div className="grid gap-6 lg:grid-cols-[380px_1fr]">
+    <div className="grid gap-6 lg:grid-cols-[300px_1fr]">
      <aside className="space-y-6">
-      <BoardForm submitLabel="建立 board" onSubmit={createBoard} />
-
       <section>
        <div className="mb-3 flex items-center justify-between gap-3">
         <h2 className="font-display text-lg font-semibold uppercase tracking-wide text-ink">
@@ -227,6 +239,14 @@ export default function BoardPage({ userEmail, userId, onLogout }: BoardPageProp
         </h2>
         <span className="text-sm text-ink-muted">{boards.length} 個</span>
        </div>
+
+       <button
+        className={`mb-3 w-full ${primaryButtonClassName}`}
+        onClick={handleStartCreateBoard}
+        type="button"
+       >
+        + 新增 Board
+       </button>
 
        <div className="space-y-3">
         {boardError ? (
@@ -244,7 +264,7 @@ export default function BoardPage({ userEmail, userId, onLogout }: BoardPageProp
            isSelected={selectedBoard?.id === board.id}
            key={board.id}
            onDelete={handleDeleteBoard}
-           onEdit={setEditingBoard}
+           onEdit={handleStartEditBoard}
            onSelect={handleSelectBoard}
           />
          ))
@@ -259,6 +279,27 @@ export default function BoardPage({ userEmail, userId, onLogout }: BoardPageProp
      </aside>
 
      <section className="space-y-6">
+      {isCreatingBoard ? (
+       <div>
+        <div className="mb-3 flex items-center justify-between gap-3">
+         <h2 className="font-display text-lg font-semibold uppercase tracking-wide text-ink">
+          新增 board
+         </h2>
+        </div>
+        <BoardForm
+         submitLabel="建立 board"
+         onCancel={() => setIsCreatingBoard(false)}
+         onSubmit={async (input) => {
+          const board = await createBoard(input);
+
+          if (board) {
+           setIsCreatingBoard(false);
+          }
+         }}
+        />
+       </div>
+      ) : null}
+
       {editingBoard ? (
        <div>
         <div className="mb-3 flex items-center justify-between gap-3">
@@ -302,13 +343,10 @@ export default function BoardPage({ userEmail, userId, onLogout }: BoardPageProp
         </div>
 
         {creatingTaskStatus ? (
-         <div className="mb-6">
-          <div className="mb-3 flex items-center justify-between gap-3">
-           <h3 className="font-display text-lg font-semibold uppercase tracking-wide text-ink hover:cursor-pointer">
-            新增 task
-           </h3>
-           <span className="text-sm text-ink-muted">{creatingTaskStatus.title}</span>
-          </div>
+         <Modal
+          onClose={() => setCreatingTaskStatus(null)}
+          title={`新增 task · ${creatingTaskStatus.title}`}
+         >
           <TaskForm
            defaultStatusKey={creatingTaskStatus.key}
            statuses={selectedBoard.statuses}
@@ -322,16 +360,11 @@ export default function BoardPage({ userEmail, userId, onLogout }: BoardPageProp
             }
            }}
           />
-         </div>
+         </Modal>
         ) : null}
 
         {editingTask ? (
-         <div className="mb-6">
-          <div className="mb-3 flex items-center justify-between gap-3">
-           <h3 className="font-display text-lg font-semibold uppercase tracking-wide text-ink">
-            修改 task
-           </h3>
-          </div>
+         <Modal onClose={() => setEditingTask(null)} title="修改 task">
           <TaskForm
            statuses={selectedBoard.statuses}
            submitLabel="儲存修改"
@@ -345,7 +378,7 @@ export default function BoardPage({ userEmail, userId, onLogout }: BoardPageProp
             }
            }}
           />
-         </div>
+         </Modal>
         ) : null}
 
         {taskError ? (
@@ -358,7 +391,7 @@ export default function BoardPage({ userEmail, userId, onLogout }: BoardPageProp
          <TaskColumnsSkeleton statuses={selectedBoard.statuses} />
         ) : (
          <DragDropProvider onDragEnd={handleDragEnd}>
-          <div className="grid gap-4 md:grid-cols-3">
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
            {selectedBoard.statuses.map((status) => (
             <TaskStatusColumn
              key={status.key}
