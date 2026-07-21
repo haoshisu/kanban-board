@@ -141,6 +141,7 @@ describe('BoardPage integration', () => {
     renderBoardPage()
 
     expect(await screen.findByText('尚未建立 board')).toBeVisible()
+    await user.click(screen.getByRole('button', { name: /新增 Board/i }))
 
     await createBoardFromUi(user, '產品開發', 'Roadmap')
 
