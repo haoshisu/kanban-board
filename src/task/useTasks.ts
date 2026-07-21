@@ -8,6 +8,7 @@ import { loadTasks as loadStoredTasks, saveTasks } from "./taskStorage";
 import { getNextPosition, mapTaskRow, normalizeTaskInput, statusKeyToDbStatus } from "./taskUtils";
 import type { Task, TaskInput } from "./types";
 import type { TaskRow } from "./taskUtils";
+import { useSyncRecovery } from "../realtime/useSyncRecovery";
 
 const createOptimisticId = () => {
  if (crypto.randomUUID) {
@@ -24,10 +25,24 @@ export const useTasks = (boardId: string | null) => {
  const loadRequestIdRef = useRef(0);
  const localDataMode = isLocalDataMode();
 
+ const sortedTasks = useMemo(() => {
+  if (!boardId) return [];
+
+  return [...tasks].sort((firstTask, secondTask) => {
+   if (firstTask.statusKey !== secondTask.statusKey) {
+    return firstTask.statusKey.localeCompare(secondTask.statusKey);
+   }
+
+   return firstTask.position - secondTask.position;
+  });
+ }, [boardId, tasks]);
+
  const refreshTasks = useCallback(
   async (showLoading = false) => {
    if (!boardId || localDataMode) return;
+
    const requestId = ++loadRequestIdRef.current;
+
    if (showLoading) {
     setIsLoadingTasks(true);
    }
@@ -55,7 +70,7 @@ export const useTasks = (boardId: string | null) => {
      action: "refreshTasks",
      boardId,
     });
-    setTaskError("無法載入tasks，請稍後在試");
+    setTaskError("載入 tasks 時發生錯誤，請稍後再試");
    } finally {
     if (showLoading && requestId === loadRequestIdRef.current) {
      setIsLoadingTasks(false);
@@ -64,36 +79,6 @@ export const useTasks = (boardId: string | null) => {
   },
   [boardId, localDataMode],
  );
-
- const sortedTasks = useMemo(() => {
-  if (!boardId) return;
-
-  return [...tasks].sort((firstTask, secondTask) => {
-   if (firstTask.statusKey !== secondTask.statusKey) {
-    return firstTask.statusKey.localeCompare(secondTask.statusKey);
-   }
-
-   return firstTask.position - secondTask.position;
-  });
- }, [boardId, tasks]);
-
- useEffect(() => {
-  loadRequestIdRef.current += 1;
-  if (!boardId) {
-   setTasks([]);
-   setIsLoadingTasks(false);
-   return;
-  }
-  if (localDataMode) {
-   setTasks(loadStoredTasks().filter((task) => task.boardId === boardId));
-   setIsLoadingTasks(false);
-   return;
-  }
-  void refreshTasks(true);
-  return () => {
-   loadRequestIdRef.current += 1;
-  };
- }, [boardId, localDataMode, refreshTasks]);
 
  const taskRealtimeStatus = useRealtimeTableRefresh({
   channelName: `tasks:${boardId ?? "none"}`,
@@ -449,6 +434,26 @@ export const useTasks = (boardId: string | null) => {
 
   setTasks((currentTasks) => currentTasks.filter((task) => task.boardId !== targetBoardId));
  }, []);
+
+ useEffect(() => {
+  loadRequestIdRef.current += 1;
+  if (!boardId) {
+   setTasks([]);
+   setIsLoadingTasks(false);
+   return;
+  }
+  if (localDataMode) {
+   setTasks(loadStoredTasks().filter((task) => task.boardId === boardId));
+   setIsLoadingTasks(false);
+   return;
+  }
+  void refreshTasks(true);
+  return () => {
+   loadRequestIdRef.current += 1;
+  };
+ }, [boardId, localDataMode, refreshTasks]);
+
+ useSyncRecovery(() => refreshTasks(false), Boolean(boardId) && !localDataMode);
 
  return {
   tasks: sortedTasks,

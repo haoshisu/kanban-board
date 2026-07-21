@@ -477,7 +477,7 @@ describe('useTasks Supabase mode', () => {
 
     expect(captureAppErrorMock).toHaveBeenCalledWith(error, {
       area: 'tasks',
-      action: 'loadTasks',
+      action: 'refreshTasks',
       boardId: 'board-1',
     })
     expect(result.current.tasks).toEqual([])
