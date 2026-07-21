@@ -17,13 +17,46 @@ const createOptimisticId = () => {
  return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 };
 
+// 純同步分支（沒有 owner、或 local data mode）可以直接算出初始 boards；
+// remote 分支則留給 effect 去做真正的非同步 fetch。
+const computeSyncBoards = (localDataMode: boolean): Board[] => {
+ if (!localDataMode) return [];
+ return loadStoredBoards();
+};
+
 export const useBoards = (ownerId: string | undefined) => {
- const [boards, setBoards] = useState<Board[]>([]);
- const [selectedBoardId, setSelectedBoardId] = useState<string | null>(null);
+ const localDataMode = isLocalDataMode();
+ const dataKey = `${ownerId ?? ""}::${localDataMode ? "local" : "remote"}`;
+
+ const [boards, setBoards] = useState<Board[]>(() => (ownerId ? computeSyncBoards(localDataMode) : []));
+ const [selectedBoardId, setSelectedBoardId] = useState<string | null>(() =>
+  ownerId ? (computeSyncBoards(localDataMode)[0]?.id ?? null) : null,
+ );
+ const [loadedDataKey, setLoadedDataKey] = useState(dataKey);
  const [isLoadingBoards, setIsLoadingBoards] = useState(false);
  const [boardError, setBoardError] = useState("");
  const loadRequestIdRef = useRef(0);
- const localDataMode = isLocalDataMode();
+
+ // ownerId 或 localDataMode 改變時，在 render 當下直接重設 boards，
+ // 不透過 effect + setState，避免多一次 commit 後的 re-render。
+ if (dataKey !== loadedDataKey) {
+  setLoadedDataKey(dataKey);
+  setBoardError("");
+
+  if (!ownerId) {
+   setBoards([]);
+   setSelectedBoardId(null);
+   setIsLoadingBoards(false);
+  } else if (localDataMode) {
+   const nextBoards = computeSyncBoards(true);
+
+   setBoards(nextBoards);
+   setSelectedBoardId(nextBoards[0]?.id ?? null);
+   setIsLoadingBoards(false);
+  } else {
+   setIsLoadingBoards(true);
+  }
+ }
 
  const selectedBoard = useMemo(
   () => boards.find((board) => board.id === selectedBoardId) ?? null,
@@ -60,10 +93,11 @@ export const useBoards = (ownerId: string | undefined) => {
    } catch (error) {
     if (requestId !== loadRequestIdRef.current) return;
     captureAppError(error, {
-     area: "board",
-     action: "refreshTasks",
+     area: "boards",
+     action: "loadBoards",
      ownerId,
     });
+    setBoardError("載入 boards 時發生錯誤，請稍後再試");
    } finally {
     if (showLoading && requestId === loadRequestIdRef.current) setIsLoadingBoards(false);
    }
@@ -297,91 +331,19 @@ export const useBoards = (ownerId: string | undefined) => {
  );
 
  useEffect(() => {
-  if (!ownerId) return;
+  loadRequestIdRef.current += 1;
 
-  if (isLocalDataMode()) {
-   let isMounted = true;
+  if (!ownerId || localDataMode) return;
 
-   const loadLocalBoards = async () => {
-    await Promise.resolve();
-
-    if (!isMounted) {
-     return;
-    }
-
-    const nextBoards = loadStoredBoards();
-
-    setBoards(nextBoards);
-    setSelectedBoardId(nextBoards[0]?.id ?? null);
-    setIsLoadingBoards(false);
-   };
-
-   void loadLocalBoards();
-
-   return () => {
-    isMounted = false;
-   };
-  }
-
-  let isMounted = true;
-
-  const loadBoards = async () => {
-   setIsLoadingBoards(true);
-   setBoardError("");
-
-   try {
-    const supabase = await getSupabase();
-
-    const { data, error } = await supabase
-     .from("boards")
-     .select("id, name, description, created_at, updated_at")
-     .eq("owner_id", ownerId)
-     .order("updated_at", { ascending: false });
-
-    if (!isMounted) {
-     return;
-    }
-
-    if (error) {
-     setBoardError(error.message);
-     setBoards([]);
-     setSelectedBoardId(null);
-     setIsLoadingBoards(false);
-     return;
-    }
-
-    const nextBoards = data.map(mapBoardRow);
-    setBoards(nextBoards);
-    setSelectedBoardId((currentId) => {
-     if (nextBoards.some((board) => board.id === currentId)) {
-      return currentId;
-     }
-
-     return nextBoards[0]?.id ?? null;
-    });
-    setIsLoadingBoards(false);
-   } catch (error) {
-    captureAppError(error, {
-     area: "boards",
-     action: "loadBoards",
-     ownerId,
-    });
-
-    if (isMounted) {
-     setBoardError("載入 boards 時發生錯誤，請稍後再試");
-     setBoards([]);
-     setSelectedBoardId(null);
-     setIsLoadingBoards(false);
-    }
-   }
-  };
-
-  void loadBoards();
+  // refreshBoards 一開始會同步呼叫 setIsLoadingBoards(true) 才開始 fetch，
+  // 這是標準的「開始 fetch 前先亮 loading」寫法，不是可搬到 render 當下算的衍生狀態。
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+  void refreshBoards(true);
 
   return () => {
-   isMounted = false;
+   loadRequestIdRef.current += 1;
   };
- }, [ownerId]);
+ }, [ownerId, localDataMode, refreshBoards]);
 
  useSyncRecovery(() => refreshBoards(false), Boolean(ownerId) && !localDataMode);
 

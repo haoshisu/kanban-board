@@ -18,12 +18,32 @@ const createOptimisticId = () => {
  return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 };
 
+// 純同步分支（沒有 board、或 local data mode）可以直接算出初始 tasks；
+// remote 分支則留給 effect 去做真正的非同步 fetch。
+const computeSyncTasks = (boardId: string | null, localDataMode: boolean): Task[] => {
+ if (!boardId) return [];
+ if (localDataMode) return loadStoredTasks().filter((task) => task.boardId === boardId);
+ return [];
+};
+
 export const useTasks = (boardId: string | null) => {
- const [tasks, setTasks] = useState<Task[]>([]);
+ const localDataMode = isLocalDataMode();
+ const dataKey = `${boardId ?? ""}::${localDataMode ? "local" : "remote"}`;
+
+ const [tasks, setTasks] = useState<Task[]>(() => computeSyncTasks(boardId, localDataMode));
+ const [loadedDataKey, setLoadedDataKey] = useState(dataKey);
  const [isLoadingTasks, setIsLoadingTasks] = useState(false);
  const [taskError, setTaskError] = useState("");
  const loadRequestIdRef = useRef(0);
- const localDataMode = isLocalDataMode();
+
+ // boardId 或 localDataMode 改變時，在 render 當下直接重設 tasks，
+ // 不透過 effect + setState，避免多一次 commit 後的 re-render。
+ if (dataKey !== loadedDataKey) {
+  setLoadedDataKey(dataKey);
+  setTaskError("");
+  setTasks(computeSyncTasks(boardId, localDataMode));
+  setIsLoadingTasks(Boolean(boardId) && !localDataMode);
+ }
 
  const sortedTasks = useMemo(() => {
   if (!boardId) return [];
@@ -437,17 +457,15 @@ export const useTasks = (boardId: string | null) => {
 
  useEffect(() => {
   loadRequestIdRef.current += 1;
-  if (!boardId) {
-   setTasks([]);
-   setIsLoadingTasks(false);
-   return;
-  }
-  if (localDataMode) {
-   setTasks(loadStoredTasks().filter((task) => task.boardId === boardId));
-   setIsLoadingTasks(false);
-   return;
-  }
+
+  if (!boardId || localDataMode) return;
+
+  // refreshTasks 一開始會同步呼叫 setIsLoadingTasks(true) 才開始 fetch，
+  // 這是標準的「開始 fetch 前先亮 loading」寫法（React 官方 data-fetching effect 範例也是這樣），
+  // 不是可以搬到 render 當下算的「衍生狀態」，因此保留並關閉這條規則。
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   void refreshTasks(true);
+
   return () => {
    loadRequestIdRef.current += 1;
   };
