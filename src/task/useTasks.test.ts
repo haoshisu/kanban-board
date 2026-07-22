@@ -44,6 +44,7 @@ const createTaskFixture = (overrides: Partial<Task> = {}): Task => ({
   description: 'Login UX',
   statusKey: 'todo',
   position: 0,
+  version: 1,
   createdAt: '2026-06-04T00:00:00.000Z',
   updatedAt: '2026-06-04T00:00:00.000Z',
   ...overrides,
@@ -56,6 +57,7 @@ const createTaskRow = (overrides: Partial<TaskRow> = {}): TaskRow => ({
   description: 'Login UX',
   status: 'todo',
   position: 0,
+  version: 1,
   created_at: '2026-06-04T00:00:00.000Z',
   updated_at: '2026-06-04T00:00:00.000Z',
   ...overrides,
@@ -73,7 +75,7 @@ const createTaskSupabaseMock = ({
   insertThrows = null,
   updateResult = { data: null, error: null },
   updateThrows = null,
-  deleteResult = { error: null },
+  deleteResult = { data: { id: 'task-1' }, error: null },
   deleteThrows = null,
   deleteByBoardResult = { error: null },
   deleteByBoardThrows = null,
@@ -83,7 +85,10 @@ const createTaskSupabaseMock = ({
   insertThrows?: Error | null
   updateResult?: { data: TaskRow | null; error: { message: string } | null }
   updateThrows?: Error | null
-  deleteResult?: { error: { message: string } | null }
+  deleteResult?: {
+    data?: { id: string } | null
+    error: { message: string } | null
+  }
   deleteThrows?: Error | null
   deleteByBoardResult?: { error: { message: string } | null }
   deleteByBoardThrows?: Error | null
@@ -99,16 +104,24 @@ const createTaskSupabaseMock = ({
   const insertSelectMock = vi.fn(() => ({ single: insertSingleMock }))
   const insertMock = vi.fn(() => ({ select: insertSelectMock }))
 
-  const updateSingleMock = updateThrows
+  const updateMaybeSingleMock = updateThrows
     ? vi.fn().mockRejectedValue(updateThrows)
     : vi.fn().mockResolvedValue(updateResult)
-  const updateSelectMock = vi.fn(() => ({ single: updateSingleMock }))
-  const updateEqMock = vi.fn(() => ({ select: updateSelectMock }))
+  const updateSelectMock = vi.fn(() => ({ maybeSingle: updateMaybeSingleMock }))
+  const updateVersionEqMock = vi.fn(() => ({ select: updateSelectMock }))
+  const updateEqMock = vi.fn(() => ({ eq: updateVersionEqMock }))
   const updateMock = vi.fn(() => ({ eq: updateEqMock }))
 
-  const deleteTaskEqMock = deleteThrows
+  const deleteTaskMaybeSingleMock = deleteThrows
     ? vi.fn().mockRejectedValue(deleteThrows)
     : vi.fn().mockResolvedValue(deleteResult)
+  const deleteTaskSelectMock = vi.fn(() => ({
+    maybeSingle: deleteTaskMaybeSingleMock,
+  }))
+  const deleteTaskVersionEqMock = vi.fn(() => ({
+    select: deleteTaskSelectMock,
+  }))
+  const deleteTaskEqMock = vi.fn(() => ({ eq: deleteTaskVersionEqMock }))
   const deleteBoardEqMock = deleteByBoardThrows
     ? vi.fn().mockRejectedValue(deleteByBoardThrows)
     : vi.fn().mockResolvedValue(deleteByBoardResult)
@@ -239,6 +252,7 @@ describe('useTasks local mode', () => {
       description: '新描述',
       statusKey: 'todo' as const,
       position: 3,
+      version: 0,
       createdAt: fixedNow,
       updatedAt: fixedNow,
     }
@@ -310,6 +324,7 @@ describe('useTasks local mode', () => {
       description: '新描述',
       statusKey: 'done' as const,
       position: 5,
+      version: 2,
       updatedAt: fixedNow,
     }
 
@@ -362,6 +377,7 @@ describe('useTasks local mode', () => {
       ...task,
       statusKey: 'done' as const,
       position: 3,
+      version: 2,
       updatedAt: fixedNow,
     }
 
@@ -487,7 +503,7 @@ describe('useTasks Supabase mode', () => {
   it('creates a task and replaces the optimistic task with Supabase data', async () => {
     const existingRow = createTaskRow({ id: 'task-1', position: 2 })
     const createdRow = createTaskRow({
-      id: 'task-from-db',
+      id: 'task-new',
       title: '新 task',
       description: '新描述',
       status: 'todo',
@@ -514,7 +530,7 @@ describe('useTasks Supabase mode', () => {
     })
 
     const expectedTask = createTaskFixture({
-      id: 'task-from-db',
+      id: 'task-new',
       title: '新 task',
       description: '新描述',
       position: 3,
@@ -616,6 +632,7 @@ describe('useTasks Supabase mode', () => {
       description: '新描述',
       status: 'done',
       position: 0,
+      version: 2,
       updated_at: '2026-06-05T13:00:00.000Z',
     })
     const { updateMock } = createTaskSupabaseMock({
@@ -649,6 +666,7 @@ describe('useTasks Supabase mode', () => {
         title: '已更新',
         description: '新描述',
         statusKey: 'done',
+        version: 2,
         updatedAt: '2026-06-05T13:00:00.000Z',
       }),
     )
@@ -742,7 +760,7 @@ describe('useTasks Supabase mode', () => {
     ]
     const { deleteTaskEqMock } = createTaskSupabaseMock({
       loadResult: { data: rows, error: null },
-      deleteResult: { error: null },
+      deleteResult: { data: { id: 'task-1' }, error: null },
     })
 
     const { result } = renderHook(() => useTasks('board-1'))
@@ -833,6 +851,7 @@ describe('useTasks Supabase mode', () => {
       id: 'task-1',
       status: 'done',
       position: 1,
+      version: 2,
       updated_at: '2026-06-05T13:00:00.000Z',
     })
     const { updateMock } = createTaskSupabaseMock({
@@ -864,6 +883,7 @@ describe('useTasks Supabase mode', () => {
         id: 'task-1',
         statusKey: 'done',
         position: 1,
+        version: 2,
         updatedAt: '2026-06-05T13:00:00.000Z',
       }),
     ])

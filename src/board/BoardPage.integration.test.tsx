@@ -54,6 +54,7 @@ const createTask = (overrides: Partial<Task> = {}): Task => ({
   description: 'Login UX',
   statusKey: 'todo',
   position: 0,
+  version: 1,
   createdAt: '2026-06-04T00:00:00.000Z',
   updatedAt: '2026-06-04T00:00:00.000Z',
   ...overrides,

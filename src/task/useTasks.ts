@@ -9,6 +9,11 @@ import { getNextPosition, mapTaskRow, normalizeTaskInput, statusKeyToDbStatus } 
 import type { Task, TaskInput } from "./types";
 import type { TaskRow } from "./taskUtils";
 import { useSyncRecovery } from "../realtime/useSyncRecovery";
+import { applyTaskRealtimePayload, upsertTaskByVersion } from "./taskRealtime";
+import type { RealtimePostgresChangesPayload } from "@supabase/supabase-js";
+
+export const TASK_SELECT_COLUMNS =
+ "id, board_id, title, description, status, position, version, created_at, updated_at" as const;
 
 const createOptimisticId = () => {
  if (crypto.randomUUID) {
@@ -71,7 +76,7 @@ export const useTasks = (boardId: string | null) => {
     const supabase = await getSupabase();
     const { data, error } = await supabase
      .from("tasks")
-     .select("id,board_id,title,description,status,position,created_at,updated_at")
+     .select(TASK_SELECT_COLUMNS)
      .eq("board_id", boardId)
      .order("status", { ascending: true })
      .order("position", { ascending: true });
@@ -100,24 +105,26 @@ export const useTasks = (boardId: string | null) => {
   [boardId, localDataMode],
  );
 
+ const handleTaskRealtimeChange = useCallback(
+  (payload: RealtimePostgresChangesPayload<TaskRow>) => {
+   setTasks((currentTasks) => applyTaskRealtimePayload(currentTasks, boardId, payload));
+  },
+  [boardId],
+ );
+
  const taskRealtimeStatus = useRealtimeTableRefresh({
   channelName: `tasks:${boardId ?? "none"}`,
   table: "tasks",
   enabled: Boolean(boardId) && !localDataMode,
+  onChange: handleTaskRealtimeChange,
   onRefresh: () => refreshTasks(false),
  });
 
  const createTask = useCallback(
   async (input: TaskInput) => {
-   if (!boardId) {
-    return null;
-   }
-
+   if (!boardId) return null;
    const normalizedInput = normalizeTaskInput(input);
-
-   if (!normalizedInput.title) {
-    return null;
-   }
+   if (!normalizedInput.title) return null;
 
    setTaskError("");
    const now = new Date().toISOString();
@@ -128,6 +135,7 @@ export const useTasks = (boardId: string | null) => {
     description: normalizedInput.description,
     statusKey: normalizedInput.statusKey,
     position: getNextPosition(tasks, normalizedInput.statusKey),
+    version: 0,
     createdAt: now,
     updatedAt: now,
    };
@@ -159,7 +167,7 @@ export const useTasks = (boardId: string | null) => {
       status: statusKeyToDbStatus[normalizedInput.statusKey],
       position: optimisticTask.position,
      })
-     .select("id, board_id, title, description, status, position, created_at, updated_at")
+     .select(TASK_SELECT_COLUMNS)
      .single();
 
     data = result.data;
@@ -189,9 +197,10 @@ export const useTasks = (boardId: string | null) => {
    }
 
    const task = mapTaskRow(data);
-   setTasks((currentTasks) =>
-    currentTasks.map((currentTask) => (currentTask.id === optimisticTask.id ? task : currentTask)),
-   );
+   //  setTasks((currentTasks) =>
+   //   currentTasks.map((currentTask) => (currentTask.id === optimisticTask.id ? task : currentTask)),
+   //  );
+   setTasks((currentTasks) => upsertTaskByVersion(currentTasks, task));
 
    return task;
   },
@@ -201,16 +210,9 @@ export const useTasks = (boardId: string | null) => {
  const updateTask = useCallback(
   async (id: string, input: TaskInput) => {
    const normalizedInput = normalizeTaskInput(input);
-
-   if (!normalizedInput.title) {
-    return null;
-   }
-
+   if (!normalizedInput.title) return null;
    const currentTask = tasks.find((task) => task.id === id);
-
-   if (!currentTask) {
-    return null;
-   }
+   if (!currentTask) return null;
 
    const position =
     currentTask.statusKey === normalizedInput.statusKey
@@ -230,13 +232,17 @@ export const useTasks = (boardId: string | null) => {
    setTasks((currentTasks) => currentTasks.map((task) => (task.id === id ? optimisticTask : task)));
 
    if (isLocalDataMode()) {
-    const nextTasks = tasks.map((task) => (task.id === id ? optimisticTask : task));
-    const allTasks = loadStoredTasks().map((task) => (task.id === id ? optimisticTask : task));
+    const localUpdatedTask = {
+     ...optimisticTask,
+     version: currentTask.version + 1,
+    };
+    const nextTasks = tasks.map((task) => (task.id === id ? localUpdatedTask : task));
+    const allTasks = loadStoredTasks().map((task) => (task.id === id ? localUpdatedTask : task));
 
     setTasks(nextTasks);
     saveTasks(allTasks);
 
-    return optimisticTask;
+    return localUpdatedTask;
    }
 
    let data: TaskRow | null = null;
@@ -254,8 +260,9 @@ export const useTasks = (boardId: string | null) => {
       updated_at: new Date().toISOString(),
      })
      .eq("id", id)
-     .select("id, board_id, title, description, status, position, created_at, updated_at")
-     .single();
+     .eq("version", currentTask.version)
+     .select(TASK_SELECT_COLUMNS)
+     .maybeSingle();
 
     data = result.data;
     error = result.error;
@@ -270,10 +277,6 @@ export const useTasks = (boardId: string | null) => {
     error = { message: "更新 task 時發生錯誤，請稍後再試" };
    }
 
-   if (!data && !error) {
-    error = { message: "更新 task 時沒有收到有效資料" };
-   }
-
    if (error) {
     setTaskError(error.message);
     setTasks((currentTasks) => currentTasks.map((task) => (task.id === id ? currentTask : task)));
@@ -281,15 +284,18 @@ export const useTasks = (boardId: string | null) => {
    }
 
    if (!data) {
+    setTaskError("這張工作已由其他裝置更新，已載入最新內容。");
+    await refreshTasks(false);
     return null;
    }
 
    const updatedTask = mapTaskRow(data);
-   setTasks((currentTasks) => currentTasks.map((task) => (task.id === id ? updatedTask : task)));
+   //  setTasks((currentTasks) => currentTasks.map((task) => (task.id === id ? updatedTask : task)));
+   setTasks((currentTasks) => upsertTaskByVersion(currentTasks, updatedTask));
 
    return updatedTask;
   },
-  [tasks],
+  [tasks, refreshTasks],
  );
 
  const deleteTask = useCallback(
@@ -308,13 +314,24 @@ export const useTasks = (boardId: string | null) => {
     return;
    }
 
+   let data: { id: string } | null;
    let error: { message: string } | null;
 
    try {
     const supabase = await getSupabase();
-    const result = await supabase.from("tasks").delete().eq("id", id);
+    const result = await supabase
+     .from("tasks")
+     .delete()
+     .eq("id", id)
+     .eq("version", deletedTask.version)
+     .select("id")
+     .maybeSingle();
 
+    data = result.data;
     error = result.error;
+    if (!data && !error) {
+     await refreshTasks(false);
+    }
    } catch (caughtError) {
     captureAppError(caughtError, {
      area: "tasks",
@@ -331,16 +348,14 @@ export const useTasks = (boardId: string | null) => {
     return;
    }
   },
-  [tasks],
+  [tasks, refreshTasks],
  );
 
  const moveTaskStatus = useCallback(
   async (id: string, statusKey: BoardStatusKey) => {
    const currentTask = tasks.find((task) => task.id === id);
 
-   if (!currentTask || currentTask.statusKey === statusKey) {
-    return;
-   }
+   if (!currentTask || currentTask.statusKey === statusKey) return;
 
    const nextPosition = getNextPosition(tasks, statusKey);
 
@@ -351,21 +366,21 @@ export const useTasks = (boardId: string | null) => {
          ...task,
          statusKey,
          position: nextPosition,
-         updatedAt: new Date().toISOString(),
         }
       : task,
     ),
    );
 
    if (isLocalDataMode()) {
-    const movedTask = {
+    const loadMovedTask = {
      ...currentTask,
      statusKey,
      position: nextPosition,
      updatedAt: new Date().toISOString(),
+     version: currentTask.version + 1,
     };
-    const nextTasks = tasks.map((task) => (task.id === id ? movedTask : task));
-    const allTasks = loadStoredTasks().map((task) => (task.id === id ? movedTask : task));
+    const nextTasks = tasks.map((task) => (task.id === id ? loadMovedTask : task));
+    const allTasks = loadStoredTasks().map((task) => (task.id === id ? loadMovedTask : task));
 
     setTasks(nextTasks);
     saveTasks(allTasks);
@@ -386,8 +401,9 @@ export const useTasks = (boardId: string | null) => {
       updated_at: new Date().toISOString(),
      })
      .eq("id", id)
-     .select("id, board_id, title, description, status, position, created_at, updated_at")
-     .single();
+     .eq("version", currentTask.version)
+     .select(TASK_SELECT_COLUMNS)
+     .maybeSingle();
 
     data = result.data;
     error = result.error;
@@ -402,10 +418,6 @@ export const useTasks = (boardId: string | null) => {
     error = { message: "移動 task 時發生錯誤，請稍後再試" };
    }
 
-   if (!data && !error) {
-    error = { message: "移動 task 時沒有收到有效資料" };
-   }
-
    if (error) {
     setTaskError(error.message);
     setTasks((currentTasks) => currentTasks.map((task) => (task.id === id ? currentTask : task)));
@@ -413,13 +425,15 @@ export const useTasks = (boardId: string | null) => {
    }
 
    if (!data) {
+    await refreshTasks(false);
     return;
    }
 
    const updatedTask = mapTaskRow(data);
-   setTasks((currentTasks) => currentTasks.map((task) => (task.id === id ? updatedTask : task)));
+   //  setTasks((currentTasks) => currentTasks.map((task) => (task.id === id ? updatedTask : task)));
+   setTasks((currentTasks) => upsertTaskByVersion(currentTasks, updatedTask));
   },
-  [tasks],
+  [tasks, refreshTasks],
  );
 
  const deleteTasksByBoard = useCallback(async (targetBoardId: string) => {
