@@ -9,6 +9,8 @@ import type { BoardRow } from "./boardUtils";
 import { useRealtimeTableRefresh } from "../realtime/useRealtimeTableRefresh";
 import { useSyncRecovery } from "../realtime/useSyncRecovery";
 
+export const BOARD_SELECT_COLUMNS = "id,owner_id,name,description,version,created_at, updated_at" as const;
+
 const createOptimisticId = () => {
  if (crypto.randomUUID) {
   return crypto.randomUUID();
@@ -74,7 +76,7 @@ export const useBoards = (ownerId: string | undefined) => {
     const supabase = await getSupabase();
     const { data, error } = await supabase
      .from("boards")
-     .select("id,name,description,created_at, updated_at")
+     .select(BOARD_SELECT_COLUMNS)
      .eq("owner_id", ownerId)
      .order("updated_at", { ascending: false });
 
