@@ -15,6 +15,9 @@ stats.html
 .env
 coverage
 
+#supabase
+supabase/.temp
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
