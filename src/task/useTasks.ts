@@ -11,6 +11,7 @@ import type { TaskRow } from "./taskUtils";
 import { useSyncRecovery } from "../realtime/useSyncRecovery";
 import { applyTaskRealtimePayload, upsertTaskByVersion } from "./taskRealtime";
 import type { RealtimePostgresChangesPayload } from "@supabase/supabase-js";
+import { replaceCachedTasks } from "../sync/taskCacheRepository";
 
 export const TASK_SELECT_COLUMNS =
  "id, board_id, title, description, status, position, version, created_at, updated_at" as const;
@@ -31,7 +32,7 @@ const computeSyncTasks = (boardId: string | null, localDataMode: boolean): Task[
  return [];
 };
 
-export const useTasks = (boardId: string | null) => {
+export const useTasks = (boardId: string | null, ownerId?: string) => {
  const localDataMode = isLocalDataMode();
  const dataKey = `${boardId ?? ""}::${localDataMode ? "local" : "remote"}`;
 
@@ -86,8 +87,17 @@ export const useTasks = (boardId: string | null) => {
 
     if (error) {
      setTaskError(error.message);
+     return;
     }
+    const nextTasks = (data ?? []).map(mapTaskRow);
+    setTasks(nextTasks);
     setTasks(data?.map(mapTaskRow) ?? []);
+
+    if (ownerId) {
+     void replaceCachedTasks(ownerId, boardId, nextTasks).catch((error: unknown) => {
+      captureAppError(error, { area: "local-replica", action: "replaceTasks", ownerId, boardId });
+     });
+    }
    } catch (error) {
     if (requestId !== loadRequestIdRef.current) return;
     captureAppError(error, {
@@ -102,7 +112,7 @@ export const useTasks = (boardId: string | null) => {
     }
    }
   },
-  [boardId, localDataMode],
+  [boardId, localDataMode, ownerId],
  );
 
  const handleTaskRealtimeChange = useCallback(

@@ -10,6 +10,7 @@ import type { Board, BoardInput } from "./types";
 import type { BoardRow } from "./boardUtils";
 import { useRealtimeTableRefresh } from "../realtime/useRealtimeTableRefresh";
 import { useSyncRecovery } from "../realtime/useSyncRecovery";
+import { replaceCachedBoards } from "../sync/boardCacheRepository";
 
 export const BOARD_SELECT_COLUMNS = "id, owner_id, name, description, version, created_at, updated_at" as const;
 
@@ -94,6 +95,15 @@ export const useBoards = (ownerId: string | undefined) => {
     setSelectedBoardId((currentId) => {
      if (nextBoards.some((board) => board.id === currentId)) return currentId;
      return nextBoards[0]?.id ?? null;
+    });
+
+    // 為什麼使用 void 而不是 await：
+
+    // - 畫面不用等待 IndexedDB 寫完。
+    // - IndexedDB 失敗不能阻止 Supabase 資料顯示。
+    // - 但失敗仍會由 captureAppError 記錄。
+    void replaceCachedBoards(ownerId, nextBoards).catch((error: unknown) => {
+     captureAppError(error, { area: "local-replica", action: "replaceBoards", ownerId });
     });
    } catch (error) {
     if (requestId !== loadRequestIdRef.current) return;
