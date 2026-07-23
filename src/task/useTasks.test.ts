@@ -121,7 +121,12 @@ const createTaskSupabaseMock = ({
   const deleteTaskVersionEqMock = vi.fn(() => ({
     select: deleteTaskSelectMock,
   }))
-  const deleteTaskEqMock = vi.fn(() => ({ eq: deleteTaskVersionEqMock }))
+  const deleteTaskEqMock = vi.fn((column: string, value: string) => {
+    void column
+    void value
+
+    return { eq: deleteTaskVersionEqMock }
+  })
   const deleteBoardEqMock = deleteByBoardThrows
     ? vi.fn().mockRejectedValue(deleteByBoardThrows)
     : vi.fn().mockResolvedValue(deleteByBoardResult)

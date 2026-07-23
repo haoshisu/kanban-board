@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { RealtimePostgresChangesPayload } from "@supabase/supabase-js";
 import { captureAppError } from "../lib/errorReporting";
 import { isLocalDataMode } from "../lib/localDataMode";
 import { getSupabase } from "../lib/supabase";
+import { applyBoardRealtimePayload, upsertBoardByVersion } from "./boardRealtime";
 import { defaultBoardStatuses, loadBoards as loadStoredBoards, saveBoards } from "./boardStorage";
 import { mapBoardRow, normalizeBoardInput } from "./boardUtils";
 import type { Board, BoardInput } from "./types";
@@ -9,7 +11,7 @@ import type { BoardRow } from "./boardUtils";
 import { useRealtimeTableRefresh } from "../realtime/useRealtimeTableRefresh";
 import { useSyncRecovery } from "../realtime/useSyncRecovery";
 
-export const BOARD_SELECT_COLUMNS = "id,owner_id,name,description,version,created_at, updated_at" as const;
+export const BOARD_SELECT_COLUMNS = "id, owner_id, name, description, version, created_at, updated_at" as const;
 
 const createOptimisticId = () => {
  if (crypto.randomUUID) {
@@ -69,6 +71,7 @@ export const useBoards = (ownerId: string | undefined) => {
   async (showLoading = false) => {
    if (!ownerId || localDataMode) return;
    const requestId = ++loadRequestIdRef.current;
+
    if (showLoading) {
     setIsLoadingBoards(true);
    }
@@ -101,16 +104,36 @@ export const useBoards = (ownerId: string | undefined) => {
     });
     setBoardError("載入 boards 時發生錯誤，請稍後再試");
    } finally {
-    if (showLoading && requestId === loadRequestIdRef.current) setIsLoadingBoards(false);
+    if (requestId === loadRequestIdRef.current) setIsLoadingBoards(false);
    }
   },
   [localDataMode, ownerId],
+ );
+
+ const handleBoardRealtimeChange = useCallback(
+  (payload: RealtimePostgresChangesPayload<BoardRow>) => {
+   setBoards((currentBoards) => {
+    const nextBoards = applyBoardRealtimePayload(currentBoards, ownerId, payload);
+
+    setSelectedBoardId((currentId) => {
+     if (nextBoards.some((board) => board.id === currentId)) {
+      return currentId;
+     }
+
+     return nextBoards[0]?.id ?? null;
+    });
+
+    return nextBoards;
+   });
+  },
+  [ownerId],
  );
 
  const boardRealtimeStatus = useRealtimeTableRefresh({
   channelName: `boards:${ownerId ?? "anonymous"}`,
   table: "boards",
   enabled: Boolean(ownerId) && !localDataMode,
+  onChange: handleBoardRealtimeChange,
   onRefresh: () => refreshBoards(false),
  });
 
@@ -133,6 +156,7 @@ export const useBoards = (ownerId: string | undefined) => {
     name: normalizedInput.name,
     description: normalizedInput.description,
     statuses: defaultBoardStatuses,
+    version: 0,
     createdAt: now,
     updatedAt: now,
    };
@@ -162,7 +186,7 @@ export const useBoards = (ownerId: string | undefined) => {
       name: normalizedInput.name,
       description: normalizedInput.description,
      })
-     .select("id, name, description, created_at, updated_at")
+     .select(BOARD_SELECT_COLUMNS)
      .single();
 
     data = result.data;
@@ -197,9 +221,14 @@ export const useBoards = (ownerId: string | undefined) => {
    }
 
    const board = mapBoardRow(data);
-   setBoards((currentBoards) =>
-    currentBoards.map((currentBoard) => (currentBoard.id === optimisticBoard.id ? board : currentBoard)),
-   );
+   setBoards((currentBoards) => {
+    const boardsWithoutOptimisticId =
+     board.id === optimisticBoard.id
+      ? currentBoards
+      : currentBoards.filter((currentBoard) => currentBoard.id !== optimisticBoard.id);
+
+    return upsertBoardByVersion(boardsWithoutOptimisticId, board);
+   });
 
    return board;
   },
@@ -231,12 +260,16 @@ export const useBoards = (ownerId: string | undefined) => {
    setBoards((currentBoards) => currentBoards.map((board) => (board.id === id ? optimisticBoard : board)));
 
    if (isLocalDataMode()) {
-    const nextBoards = boards.map((board) => (board.id === id ? optimisticBoard : board));
+    const localUpdatedBoard = {
+     ...optimisticBoard,
+     version: previousBoard.version + 1,
+    };
+    const nextBoards = boards.map((board) => (board.id === id ? localUpdatedBoard : board));
 
     setBoards(nextBoards);
     saveBoards(nextBoards);
 
-    return optimisticBoard;
+    return localUpdatedBoard;
    }
 
    let data: BoardRow | null = null;
@@ -252,8 +285,9 @@ export const useBoards = (ownerId: string | undefined) => {
       updated_at: new Date().toISOString(),
      })
      .eq("id", id)
-     .select("id, name, description, created_at, updated_at")
-     .single();
+     .eq("version", previousBoard.version)
+     .select(BOARD_SELECT_COLUMNS)
+     .maybeSingle();
 
     data = result.data;
     error = result.error;
@@ -266,10 +300,6 @@ export const useBoards = (ownerId: string | undefined) => {
     error = { message: "更新 board 時發生錯誤，請稍後再試" };
    }
 
-   if (!data && !error) {
-    error = { message: "更新 board 時沒有收到有效資料" };
-   }
-
    if (error) {
     setBoardError(error.message);
     setBoards((currentBoards) => currentBoards.map((board) => (board.id === id ? previousBoard : board)));
@@ -277,15 +307,17 @@ export const useBoards = (ownerId: string | undefined) => {
    }
 
    if (!data) {
+    setBoardError("這個 Board 已由其他裝置更新，已載入最新內容。");
+    await refreshBoards(false);
     return null;
    }
 
    const updatedBoard = mapBoardRow(data);
-   setBoards((currentBoards) => currentBoards.map((board) => (board.id === id ? updatedBoard : board)));
+   setBoards((currentBoards) => upsertBoardByVersion(currentBoards, updatedBoard));
 
    return updatedBoard;
   },
-  [boards],
+  [boards, refreshBoards],
  );
 
  const deleteBoard = useCallback(
@@ -310,9 +342,26 @@ export const useBoards = (ownerId: string | undefined) => {
 
    try {
     const supabase = await getSupabase();
-    const result = await supabase.from("boards").delete().eq("id", id);
+    const deletedBoard = boards.find((board) => board.id === id);
+
+    if (!deletedBoard) {
+     return;
+    }
+
+    const result = await supabase
+     .from("boards")
+     .delete()
+     .eq("id", id)
+     .eq("version", deletedBoard.version)
+     .select("id")
+     .maybeSingle();
 
     error = result.error;
+
+    if (!result.data && !error) {
+     setBoardError("這個 Board 已由其他裝置更新，已載入最新內容。");
+     await refreshBoards(false);
+    }
    } catch (caughtError) {
     captureAppError(caughtError, {
      area: "boards",
@@ -329,7 +378,7 @@ export const useBoards = (ownerId: string | undefined) => {
     return;
    }
   },
-  [boards, selectedBoardId],
+  [boards, refreshBoards, selectedBoardId],
  );
 
  useEffect(() => {
