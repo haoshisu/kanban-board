@@ -97,7 +97,7 @@ export const useTasks = (boardId: string | null) => {
     });
     setTaskError("載入 tasks 時發生錯誤，請稍後再試");
    } finally {
-    if (showLoading && requestId === loadRequestIdRef.current) {
+    if (requestId === loadRequestIdRef.current) {
      setIsLoadingTasks(false);
     }
    }

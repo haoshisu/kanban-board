@@ -48,6 +48,7 @@ const createBoardFixture = (overrides: Partial<Board> = {}): Board => ({
   name: '產品開發',
   description: 'Roadmap',
   statuses: defaultBoardStatuses,
+  version: 1,
   createdAt: '2026-06-04T00:00:00.000Z',
   updatedAt: '2026-06-04T00:00:00.000Z',
   ...overrides,
@@ -55,8 +56,10 @@ const createBoardFixture = (overrides: Partial<Board> = {}): Board => ({
 
 const createBoardRow = (overrides: Partial<BoardRow> = {}): BoardRow => ({
   id: 'board-1',
+  owner_id: 'owner-1',
   name: '產品開發',
   description: 'Roadmap',
+  version: 1,
   created_at: '2026-06-04T00:00:00.000Z',
   updated_at: '2026-06-04T00:00:00.000Z',
   ...overrides,
@@ -74,7 +77,7 @@ const createBoardSupabaseMock = ({
   insertThrows = null,
   updateResult = { data: null, error: null },
   updateThrows = null,
-  deleteResult = { error: null },
+  deleteResult = { data: { id: 'board-1' }, error: null },
   deleteThrows = null,
 }: {
   loadResult?: { data: BoardRow[]; error: { message: string } | null }
@@ -82,7 +85,10 @@ const createBoardSupabaseMock = ({
   insertThrows?: Error | null
   updateResult?: { data: BoardRow | null; error: { message: string } | null }
   updateThrows?: Error | null
-  deleteResult?: { error: { message: string } | null }
+  deleteResult?: {
+    data?: { id: string } | null
+    error: { message: string } | null
+  }
   deleteThrows?: Error | null
 }) => {
   const orderMock = vi.fn().mockResolvedValue(loadResult)
@@ -95,16 +101,24 @@ const createBoardSupabaseMock = ({
   const insertSelectMock = vi.fn(() => ({ single: insertSingleMock }))
   const insertMock = vi.fn(() => ({ select: insertSelectMock }))
 
-  const updateSingleMock = updateThrows
+  const updateMaybeSingleMock = updateThrows
     ? vi.fn().mockRejectedValue(updateThrows)
     : vi.fn().mockResolvedValue(updateResult)
-  const updateSelectMock = vi.fn(() => ({ single: updateSingleMock }))
-  const updateEqMock = vi.fn(() => ({ select: updateSelectMock }))
+  const updateSelectMock = vi.fn(() => ({
+    maybeSingle: updateMaybeSingleMock,
+  }))
+  const updateVersionEqMock = vi.fn(() => ({ select: updateSelectMock }))
+  const updateEqMock = vi.fn(() => ({ eq: updateVersionEqMock }))
   const updateMock = vi.fn(() => ({ eq: updateEqMock }))
 
-  const deleteEqMock = deleteThrows
+  const deleteMaybeSingleMock = deleteThrows
     ? vi.fn().mockRejectedValue(deleteThrows)
     : vi.fn().mockResolvedValue(deleteResult)
+  const deleteSelectMock = vi.fn(() => ({
+    maybeSingle: deleteMaybeSingleMock,
+  }))
+  const deleteVersionEqMock = vi.fn(() => ({ select: deleteSelectMock }))
+  const deleteEqMock = vi.fn(() => ({ eq: deleteVersionEqMock }))
   const deleteMock = vi.fn(() => ({ eq: deleteEqMock }))
 
   const fromMock = vi.fn(() => ({
@@ -211,6 +225,7 @@ describe('useBoards local mode', () => {
       name: '新 board',
       description: '新描述',
       statuses: defaultBoardStatuses,
+      version: 0,
       createdAt: fixedNow,
       updatedAt: fixedNow,
     }
@@ -267,6 +282,7 @@ describe('useBoards local mode', () => {
       ...board,
       name: '已更新',
       description: '新描述',
+      version: 2,
       updatedAt: fixedNow,
     }
 
@@ -502,6 +518,7 @@ describe('useBoards Supabase mode', () => {
       id: 'board-1',
       name: '已更新',
       description: '新描述',
+      version: 2,
       updated_at: '2026-06-05T13:00:00.000Z',
     })
     const { updateMock } = createBoardSupabaseMock({
@@ -531,6 +548,7 @@ describe('useBoards Supabase mode', () => {
         id: 'board-1',
         name: '已更新',
         description: '新描述',
+        version: 2,
         updatedAt: '2026-06-05T13:00:00.000Z',
       }),
     )
@@ -619,7 +637,7 @@ describe('useBoards Supabase mode', () => {
     ]
     const { deleteEqMock } = createBoardSupabaseMock({
       loadResult: { data: rows, error: null },
-      deleteResult: { error: null },
+      deleteResult: { data: { id: 'board-1' }, error: null },
     })
 
     const { result } = renderHook(() => useBoards('owner-1'))

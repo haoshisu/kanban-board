@@ -3,6 +3,7 @@ import type { Board, BoardInput } from "./types";
 
 export type BoardRow = {
  id: string;
+ owner_id: string;
  name: string;
  description: string | null;
  version: number;
