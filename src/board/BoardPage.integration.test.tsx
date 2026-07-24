@@ -313,4 +313,27 @@ describe('BoardPage integration', () => {
     expect(readStoredBoards()).toMatchObject([{ id: 'board-2' }])
     expect(readStoredTasks()).toMatchObject([{ id: 'task-2', boardId: 'board-2' }])
   })
+
+  it('shows cached data as read-only while offline', async () => {
+    vi.spyOn(window.navigator, 'onLine', 'get').mockReturnValue(false)
+
+    storeBoards([createBoard()])
+    storeTasks([createTask()])
+    renderBoardPage()
+
+    expect(await screen.findByText(/目前離線/)).toBeVisible()
+
+    const boardCard = screen.getByRole('article', { name: /Board/ })
+    expect(within(boardCard).getByRole('button', { name: /修改/ })).toBeDisabled()
+    expect(within(boardCard).getByRole('button', { name: /刪除/ })).toBeDisabled()
+
+    const taskCard = await screen.findByRole('article', { name: /Task/ })
+    expect(within(taskCard).getByRole('button', { name: /修改/ })).toBeDisabled()
+    expect(within(taskCard).getByRole('button', { name: /刪除/ })).toBeDisabled()
+
+    expect(screen.getByRole('button', { name: /新增 Board/i })).toBeDisabled()
+    for (const button of screen.getAllByRole('button', { name: /新增 task/ })) {
+      expect(button).toBeDisabled()
+    }
+  })
 })

@@ -3,6 +3,7 @@ import type { Board } from "../types";
 type BoardCardProps = {
  board: Board;
  isSelected: boolean;
+ isReadOnly?: boolean;
  onSelect: (id: string) => void;
  onEdit: (board: Board) => void;
  onDelete: (board: Board) => void;
@@ -13,7 +14,14 @@ const dateFormatter = new Intl.DateTimeFormat("zh-TW", {
  day: "numeric",
 });
 
-export function BoardCard({ board, isSelected, onSelect, onEdit, onDelete }: BoardCardProps) {
+export function BoardCard({
+ board,
+ isSelected,
+ isReadOnly = false,
+ onSelect,
+ onEdit,
+ onDelete,
+}: BoardCardProps) {
  return (
   <article
    aria-label={`Board ${board.name}`}
@@ -38,14 +46,16 @@ export function BoardCard({ board, isSelected, onSelect, onEdit, onDelete }: Boa
 
    <div className="mt-4 flex gap-2">
     <button
-     className="rounded-[5px] border border-ink-muted/40 px-3 py-1.5 text-sm font-medium text-ink transition hover:bg-ink/5 hover:cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-stamp-todo"
+     className="rounded-[5px] border border-ink-muted/40 px-3 py-1.5 text-sm font-medium text-ink transition hover:bg-ink/5 hover:cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-stamp-todo"
+     disabled={isReadOnly}
      onClick={() => onEdit(board)}
      type="button"
     >
      修改
     </button>
     <button
-     className="rounded-[5px] border border-error px-3 py-1.5 text-sm font-medium text-error transition hover:bg-error/10 hover:cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-error"
+     className="rounded-[5px] border border-error px-3 py-1.5 text-sm font-medium text-error transition hover:bg-error/10 hover:cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-error"
+     disabled={isReadOnly}
      onClick={() => onDelete(board)}
      type="button"
     >

@@ -6,6 +6,7 @@ import type { Task } from "../types";
 
 type TaskCardProps = {
  task: Task;
+ isReadOnly?: boolean;
  onEdit: (task: Task) => void;
  onDelete: (task: Task) => void;
 };
@@ -15,10 +16,11 @@ const dateFormatter = new Intl.DateTimeFormat("zh-TW", {
  day: "numeric",
 });
 
-function TaskCardComponent({ task, onEdit, onDelete }: TaskCardProps) {
+function TaskCardComponent({ task, isReadOnly = false, onEdit, onDelete }: TaskCardProps) {
  const { isDragging, ref } = useDraggable({
   id: task.id,
   type: "task",
+  disabled: isReadOnly,
   data: {
    taskId: task.id,
    statusKey: task.statusKey,
@@ -28,7 +30,9 @@ function TaskCardComponent({ task, onEdit, onDelete }: TaskCardProps) {
  return (
   <article
    aria-label={`Task ${task.title}`}
-   className={`relative cursor-grab overflow-hidden rounded-md border border-ink-muted/30 bg-card p-3 pt-4 transition active:cursor-grabbing ${
+   className={`relative overflow-hidden rounded-md border border-ink-muted/30 bg-card p-3 pt-4 transition ${
+    isReadOnly ? "cursor-default" : "cursor-grab active:cursor-grabbing"
+   } ${
     isDragging ? "opacity-50 ring-2 ring-stamp-todo/40 motion-safe:shadow-lg" : ""
    }`}
    ref={ref}
@@ -55,14 +59,16 @@ function TaskCardComponent({ task, onEdit, onDelete }: TaskCardProps) {
 
    <div className="mt-3 flex gap-2">
     <button
-     className="rounded-[5px] border border-ink-muted/40 px-2.5 py-1 text-xs font-medium text-ink transition hover:cursor-pointer hover:bg-ink/5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-stamp-todo"
+     className="rounded-[5px] border border-ink-muted/40 px-2.5 py-1 text-xs font-medium text-ink transition hover:cursor-pointer hover:bg-ink/5 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-stamp-todo"
+     disabled={isReadOnly}
      onClick={() => onEdit(task)}
      type="button"
     >
      修改
     </button>
     <button
-     className="rounded-[5px] border border-error px-2.5 py-1 text-xs font-medium text-error transition hover:cursor-pointer hover:bg-error/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-error"
+     className="rounded-[5px] border border-error px-2.5 py-1 text-xs font-medium text-error transition hover:cursor-pointer hover:bg-error/10 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-error"
+     disabled={isReadOnly}
      onClick={() => onDelete(task)}
      type="button"
     >

@@ -8,6 +8,7 @@ import type { Task } from "../types";
 type TaskStatusColumnProps = {
  status: BoardStatus;
  tasks: Task[];
+ isReadOnly?: boolean;
  onCreate: (status: BoardStatus) => void;
  onEdit: (task: Task) => void;
  onDelete: (task: Task) => void;
@@ -16,6 +17,7 @@ type TaskStatusColumnProps = {
 function TaskStatusColumnComponent({
  status,
  tasks,
+ isReadOnly = false,
  onCreate,
  onEdit,
  onDelete,
@@ -23,6 +25,7 @@ function TaskStatusColumnComponent({
  const { isDropTarget, ref } = useDroppable({
   id: `status-${status.key}`,
   accept: "task",
+  disabled: isReadOnly,
   data: {
    statusKey: status.key,
   },
@@ -50,7 +53,8 @@ function TaskStatusColumnComponent({
    </div>
 
    <button
-    className="mt-4 w-full rounded-[5px] border border-dashed border-ink-muted/40 bg-card/60 px-3 py-2 font-display text-xs font-medium uppercase tracking-wide text-ink-muted transition hover:cursor-pointer hover:border-ink-muted/70 hover:bg-card focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-stamp-todo"
+    className="mt-4 w-full rounded-[5px] border border-dashed border-ink-muted/40 bg-card/60 px-3 py-2 font-display text-xs font-medium uppercase tracking-wide text-ink-muted transition hover:cursor-pointer hover:border-ink-muted/70 hover:bg-card disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-stamp-todo"
+    disabled={isReadOnly}
     onClick={() => onCreate(status)}
     type="button"
    >
@@ -59,7 +63,15 @@ function TaskStatusColumnComponent({
 
    <div className="mt-4 space-y-3">
     {tasks.length ? (
-     tasks.map((task) => <TaskCard key={task.id} task={task} onDelete={onDelete} onEdit={onEdit} />)
+     tasks.map((task) => (
+      <TaskCard
+       isReadOnly={isReadOnly}
+       key={task.id}
+       task={task}
+       onDelete={onDelete}
+       onEdit={onEdit}
+      />
+     ))
     ) : (
      <div className="rounded-md border border-dashed border-ink-muted/40 bg-card/40 p-4 text-center text-sm text-ink-muted">
       尚無 task
