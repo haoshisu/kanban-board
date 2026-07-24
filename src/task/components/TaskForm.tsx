@@ -14,6 +14,7 @@ import type { Task, TaskInput } from '../types'
 type TaskFormProps = {
   statuses: BoardStatus[]
   task?: Task
+  disabled?: boolean
   defaultStatusKey?: TaskInput['statusKey']
   submitLabel: string
   onSubmit: (input: TaskInput) => Promise<unknown> | unknown
@@ -23,6 +24,7 @@ type TaskFormProps = {
 export function TaskForm({
   statuses,
   task,
+  disabled = false,
   defaultStatusKey,
   submitLabel,
   onSubmit,
@@ -42,6 +44,8 @@ export function TaskForm({
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
+
+    if (disabled) return
 
     if (!title.trim()) {
       setError('請輸入 task 標題')
@@ -73,7 +77,7 @@ export function TaskForm({
           </label>
           <input
             className={formInputClassName}
-            disabled={isSubmitting}
+            disabled={disabled || isSubmitting}
             id={titleId}
             onChange={(event) => setTitle(event.target.value)}
             placeholder="例如：設計登入流程"
@@ -88,7 +92,7 @@ export function TaskForm({
           </label>
           <textarea
             className={`min-h-20 resize-none ${formInputClassName}`}
-            disabled={isSubmitting}
+            disabled={disabled || isSubmitting}
             id={descriptionId}
             onChange={(event) => setDescription(event.target.value)}
             placeholder="補充 task 的內容或驗收重點"
@@ -102,7 +106,7 @@ export function TaskForm({
           </label>
           <select
             className={formInputClassName}
-            disabled={isSubmitting}
+            disabled={disabled || isSubmitting}
             id={statusId}
             onChange={(event) => setStatusKey(event.target.value as TaskInput['statusKey'])}
             value={statusKey}
@@ -118,13 +122,13 @@ export function TaskForm({
         {error ? <p className={formErrorClassName}>{error}</p> : null}
 
         <div className="flex flex-col gap-2 sm:flex-row">
-          <button className={primaryButtonClassName} disabled={isSubmitting} type="submit">
+          <button className={primaryButtonClassName} disabled={disabled || isSubmitting} type="submit">
             {isSubmitting ? '處理中...' : submitLabel}
           </button>
           {onCancel ? (
             <button
               className={secondaryButtonClassName}
-              disabled={isSubmitting}
+              disabled={disabled || isSubmitting}
               onClick={onCancel}
               type="button"
             >

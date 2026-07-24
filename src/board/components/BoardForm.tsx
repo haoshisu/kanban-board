@@ -12,12 +12,13 @@ import type { Board, BoardInput } from "../types";
 
 type BoardFormProps = {
  board?: Board;
+ disabled?: boolean;
  submitLabel: string;
  onSubmit: (input: BoardInput) => Promise<unknown> | unknown;
  onCancel?: () => void;
 };
 
-export function BoardForm({ board, submitLabel, onSubmit, onCancel }: BoardFormProps) {
+export function BoardForm({ board, disabled = false, submitLabel, onSubmit, onCancel }: BoardFormProps) {
  const formId = useId();
  const nameId = `${formId}-board-name`;
  const descriptionId = `${formId}-board-description`;
@@ -28,6 +29,8 @@ export function BoardForm({ board, submitLabel, onSubmit, onCancel }: BoardFormP
 
  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
   event.preventDefault();
+
+  if (disabled) return;
 
   if (!name.trim()) {
    setError("請輸入 board 名稱");
@@ -59,7 +62,7 @@ export function BoardForm({ board, submitLabel, onSubmit, onCancel }: BoardFormP
      </label>
      <input
       className={formInputClassName}
-      disabled={isSubmitting}
+      disabled={disabled || isSubmitting}
       id={nameId}
       onChange={(event) => setName(event.target.value)}
       placeholder="例如：產品開發"
@@ -74,7 +77,7 @@ export function BoardForm({ board, submitLabel, onSubmit, onCancel }: BoardFormP
      </label>
      <textarea
       className={`min-h-24 resize-none ${formInputClassName}`}
-      disabled={isSubmitting}
+      disabled={disabled || isSubmitting}
       id={descriptionId}
       onChange={(event) => setDescription(event.target.value)}
       placeholder="補充這個 board 的協作目標"
@@ -85,13 +88,13 @@ export function BoardForm({ board, submitLabel, onSubmit, onCancel }: BoardFormP
     {error ? <p className={formErrorClassName}>{error}</p> : null}
 
     <div className="flex flex-col gap-2 sm:flex-row">
-     <button className={primaryButtonClassName} disabled={isSubmitting} type="submit">
+     <button className={primaryButtonClassName} disabled={disabled || isSubmitting} type="submit">
       {isSubmitting ? "處理中..." : submitLabel}
      </button>
      {onCancel ? (
       <button
        className={secondaryButtonClassName}
-       disabled={isSubmitting}
+       disabled={disabled || isSubmitting}
        onClick={onCancel}
        type="button"
       >

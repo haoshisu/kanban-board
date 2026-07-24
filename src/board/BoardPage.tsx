@@ -17,6 +17,7 @@ import type { BoardStatus } from "./types";
 import type { AiTaskBreakdownResult } from "../ai/components/AiTaskBreakdownPanel";
 import type { Task, TaskInput } from "../task";
 import { generateTaskBreakdown } from "../ai/components/service/breakdown-task";
+import { useOnlineStatus } from "../realtime/useOnlineStatus";
 
 type BoardPageProps = {
  userEmail?: string;
@@ -67,6 +68,8 @@ function TaskColumnsSkeleton({ statuses }: { statuses: BoardStatus[] }) {
 }
 
 export default function BoardPage({ userEmail, userId, onLogout }: BoardPageProps) {
+ const isOnline = useOnlineStatus();
+ const isReadOnly = !isOnline;
  const { boards, selectedBoard, isLoadingBoards, boardError, selectBoard, createBoard, updateBoard, deleteBoard } =
   useBoards(userId);
  const { tasks, isLoadingTasks, taskError, createTask, updateTask, deleteTask, moveTaskStatus, deleteTasksByBoard } =
@@ -81,6 +84,8 @@ export default function BoardPage({ userEmail, userId, onLogout }: BoardPageProp
 
  const handleDeleteBoard = useCallback(
   async (board: Board) => {
+   if (!isOnline) return;
+
    const confirmed = window.confirm(`確定要刪除「${board.name}」嗎？`);
 
    if (confirmed) {
@@ -92,7 +97,7 @@ export default function BoardPage({ userEmail, userId, onLogout }: BoardPageProp
     }
    }
   },
-  [deleteBoard, deleteTasksByBoard, editingBoard?.id],
+  [deleteBoard, deleteTasksByBoard, editingBoard?.id, isOnline],
  );
 
  const handleSelectBoard = useCallback(
@@ -107,19 +112,31 @@ export default function BoardPage({ userEmail, userId, onLogout }: BoardPageProp
  );
 
  const handleStartCreateBoard = useCallback(() => {
+  if (!isOnline) return;
+
   setEditingBoard(null);
   setIsCreatingBoard(true);
- }, []);
+ }, [isOnline]);
 
- const handleStartEditBoard = useCallback((board: Board) => {
-  setIsCreatingBoard(false);
-  setEditingBoard(board);
- }, []);
+ const handleStartEditBoard = useCallback(
+  (board: Board) => {
+   if (!isOnline) return;
 
- const handleCreateTask = useCallback((status: BoardStatus) => {
-  setEditingTask(null);
-  setCreatingTaskStatus(status);
- }, []);
+   setIsCreatingBoard(false);
+   setEditingBoard(board);
+  },
+  [isOnline],
+ );
+
+ const handleCreateTask = useCallback(
+  (status: BoardStatus) => {
+   if (!isOnline) return;
+
+   setEditingTask(null);
+   setCreatingTaskStatus(status);
+  },
+  [isOnline],
+ );
 
  const handleGenerateAiTasks = useCallback(async (prompt: string): Promise<AiTaskBreakdownResult> => {
   return generateTaskBreakdown(prompt);
@@ -127,6 +144,8 @@ export default function BoardPage({ userEmail, userId, onLogout }: BoardPageProp
 
  const handleCreateAiTasks = useCallback(
   async (inputs: TaskInput[]) => {
+   if (!isOnline) return;
+
    setCreatingTaskStatus(null);
    setEditingTask(null);
 
@@ -136,16 +155,23 @@ export default function BoardPage({ userEmail, userId, onLogout }: BoardPageProp
 
    setIsAiPanelOpen(false);
   },
-  [createTask],
+  [createTask, isOnline],
  );
 
- const handleEditTask = useCallback((task: Task) => {
-  setCreatingTaskStatus(null);
-  setEditingTask(task);
- }, []);
+ const handleEditTask = useCallback(
+  (task: Task) => {
+   if (!isOnline) return;
+
+   setCreatingTaskStatus(null);
+   setEditingTask(task);
+  },
+  [isOnline],
+ );
 
  const handleDeleteTask = useCallback(
   async (task: Task) => {
+   if (!isOnline) return;
+
    const confirmed = window.confirm(`確定要刪除「${task.title}」嗎？`);
 
    if (confirmed) {
@@ -156,11 +182,13 @@ export default function BoardPage({ userEmail, userId, onLogout }: BoardPageProp
     }
    }
   },
-  [deleteTask, editingTask?.id],
+  [deleteTask, editingTask?.id, isOnline],
  );
 
  const handleDragEnd = useCallback(
   (event: DragEndEvent) => {
+   if (!isOnline) return;
+
    if (event.canceled) {
     return;
    }
@@ -180,7 +208,7 @@ export default function BoardPage({ userEmail, userId, onLogout }: BoardPageProp
     });
    }
   },
-  [moveTaskStatus],
+  [isOnline, moveTaskStatus],
  );
 
  return (
@@ -207,6 +235,12 @@ export default function BoardPage({ userEmail, userId, onLogout }: BoardPageProp
      </div>
     </header>
 
+    {isReadOnly ? (
+     <div className="mb-6 rounded-lg border border-amber-500/40 bg-amber-50 p-3 text-sm text-amber-900">
+      目前離線，正在顯示上一次同步的資料。離線修改會在下一階段開放。
+     </div>
+    ) : null}
+
     <div className="grid gap-6 lg:grid-cols-[300px_1fr]">
      <aside className="space-y-6">
       <section>
@@ -215,7 +249,12 @@ export default function BoardPage({ userEmail, userId, onLogout }: BoardPageProp
         <span className="text-sm text-ink-muted">{boards.length} 個</span>
        </div>
 
-       <button className={`mb-3 w-full ${primaryButtonClassName}`} onClick={handleStartCreateBoard} type="button">
+        <button
+         className={`mb-3 w-full ${primaryButtonClassName}`}
+         disabled={isReadOnly}
+         onClick={handleStartCreateBoard}
+         type="button"
+        >
         + 新增 Board
        </button>
 
@@ -230,6 +269,7 @@ export default function BoardPage({ userEmail, userId, onLogout }: BoardPageProp
          boards.map((board) => (
           <BoardCard
            board={board}
+           isReadOnly={isReadOnly}
            isSelected={selectedBoard?.id === board.id}
            key={board.id}
            onDelete={handleDeleteBoard}
@@ -250,7 +290,8 @@ export default function BoardPage({ userEmail, userId, onLogout }: BoardPageProp
         <div className="mb-3 flex items-center justify-between gap-3">
          <h2 className="font-display text-lg font-semibold uppercase tracking-wide text-ink">新增 board</h2>
         </div>
-        <BoardForm
+         <BoardForm
+          disabled={isReadOnly}
          submitLabel="建立 board"
          onCancel={() => setIsCreatingBoard(false)}
          onSubmit={async (input) => {
@@ -269,8 +310,9 @@ export default function BoardPage({ userEmail, userId, onLogout }: BoardPageProp
         <div className="mb-3 flex items-center justify-between gap-3">
          <h2 className="font-display text-lg font-semibold uppercase tracking-wide text-ink">修改 board</h2>
         </div>
-        <BoardForm
-         board={editingBoard}
+         <BoardForm
+          board={editingBoard}
+          disabled={isReadOnly}
          submitLabel="儲存修改"
          onCancel={() => setEditingBoard(null)}
          onSubmit={async (input) => {
@@ -293,7 +335,8 @@ export default function BoardPage({ userEmail, userId, onLogout }: BoardPageProp
          </div>
 
          <button
-          className={isAiPanelOpen ? secondaryButtonClassName : primaryButtonClassName}
+           className={isAiPanelOpen ? secondaryButtonClassName : primaryButtonClassName}
+           disabled={isReadOnly}
           onClick={() => setIsAiPanelOpen((isOpen) => !isOpen)}
           type="button"
          >
@@ -303,8 +346,9 @@ export default function BoardPage({ userEmail, userId, onLogout }: BoardPageProp
 
         {isAiPanelOpen ? (
          <div className="mb-6">
-          <AiTaskBreakdownPanel
-           defaultStatusKey="todo"
+           <AiTaskBreakdownPanel
+            defaultStatusKey="todo"
+            disabled={isReadOnly}
            statuses={selectedBoard.statuses}
            onCreateTasks={handleCreateAiTasks}
            onGenerateTasks={handleGenerateAiTasks}
@@ -314,8 +358,9 @@ export default function BoardPage({ userEmail, userId, onLogout }: BoardPageProp
 
         {creatingTaskStatus ? (
          <Modal onClose={() => setCreatingTaskStatus(null)} title={`新增 task · ${creatingTaskStatus.title}`}>
-          <TaskForm
-           defaultStatusKey={creatingTaskStatus.key}
+           <TaskForm
+            defaultStatusKey={creatingTaskStatus.key}
+            disabled={isReadOnly}
            statuses={selectedBoard.statuses}
            submitLabel="建立 task"
            onCancel={() => setCreatingTaskStatus(null)}
@@ -332,7 +377,8 @@ export default function BoardPage({ userEmail, userId, onLogout }: BoardPageProp
 
         {editingTask ? (
          <Modal onClose={() => setEditingTask(null)} title="修改 task">
-          <TaskForm
+           <TaskForm
+            disabled={isReadOnly}
            statuses={selectedBoard.statuses}
            submitLabel="儲存修改"
            task={editingTask}
@@ -358,7 +404,8 @@ export default function BoardPage({ userEmail, userId, onLogout }: BoardPageProp
          <DragDropProvider onDragEnd={handleDragEnd}>
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
            {selectedBoard.statuses.map((status) => (
-            <TaskStatusColumn
+             <TaskStatusColumn
+              isReadOnly={isReadOnly}
              key={status.key}
              status={status}
              tasks={tasksByStatus[status.key]}
