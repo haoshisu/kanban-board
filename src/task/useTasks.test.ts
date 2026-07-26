@@ -548,6 +548,41 @@ describe("useTasks Supabase mode", () => {
   ])
  })
 
+ it("hydrates cached tasks when switching boards offline without starting Supabase", async () => {
+  const firstBoardTask = createTaskFixture({ id: "cached-task", title: "Offline task" })
+  const secondBoardTask = createTaskFixture({
+   id: "board-2-task",
+   boardId: "board-2",
+   title: "Board 2 offline task",
+  })
+
+  readCachedTasksMock.mockImplementation((_ownerId: string, boardId: string) =>
+   Promise.resolve(boardId === "board-1" ? [firstBoardTask] : [secondBoardTask]),
+  )
+
+  const { result, rerender } = renderHook(
+   ({ boardId }: { boardId: string }) => useTasks(boardId, "owner-1", false),
+   { initialProps: { boardId: "board-1" } },
+  )
+
+  await flushLocalEffect()
+
+  expect(readCachedTasksMock).toHaveBeenCalledWith("owner-1", "board-1")
+  expect(result.current.tasks).toEqual([firstBoardTask])
+
+  rerender({ boardId: "board-2" })
+  await flushLocalEffect()
+
+  expect(readCachedTasksMock).toHaveBeenCalledWith("owner-1", "board-2")
+  expect(getSupabaseMock).not.toHaveBeenCalled()
+  expect(realtimeTableRefreshMock).toHaveBeenLastCalledWith(
+   expect.objectContaining({ enabled: false }),
+  )
+  expect(result.current.tasks).toEqual([secondBoardTask])
+  expect(result.current.isLoadingTasks).toBe(false)
+  expect(result.current.taskError).toBe("")
+ })
+
  it("does not let slower cached tasks overwrite the Supabase snapshot", async () => {
   const cacheDeferred = createDeferred<Task[]>()
   const serverRow = createTaskRow({ id: "server-task", title: "Server task", version: 2 })
