@@ -314,7 +314,8 @@ describe('BoardPage integration', () => {
     expect(readStoredTasks()).toMatchObject([{ id: 'task-2', boardId: 'board-2' }])
   })
 
-  it('shows cached data as read-only while offline', async () => {
+  it('keeps board and task editing available while offline', async () => {
+    const user = userEvent.setup()
     vi.spyOn(window.navigator, 'onLine', 'get').mockReturnValue(false)
 
     storeBoards([createBoard()])
@@ -324,16 +325,18 @@ describe('BoardPage integration', () => {
     expect(await screen.findByText(/目前離線/)).toBeVisible()
 
     const boardCard = screen.getByRole('article', { name: /Board/ })
-    expect(within(boardCard).getByRole('button', { name: /修改/ })).toBeDisabled()
-    expect(within(boardCard).getByRole('button', { name: /刪除/ })).toBeDisabled()
+    expect(within(boardCard).getByRole('button', { name: /修改/ })).toBeEnabled()
+    expect(within(boardCard).getByRole('button', { name: /刪除/ })).toBeEnabled()
 
-    const taskCard = await screen.findByRole('article', { name: /Task/ })
-    expect(within(taskCard).getByRole('button', { name: /修改/ })).toBeDisabled()
-    expect(within(taskCard).getByRole('button', { name: /刪除/ })).toBeDisabled()
+    await createTaskFromUi(user, '尚未開始', '離線新增 task')
+    const taskCard = await screen.findByRole('article', { name: 'Task 離線新增 task' })
+    expect(within(taskCard).getByRole('button', { name: /修改/ })).toBeEnabled()
+    expect(within(taskCard).getByRole('button', { name: /刪除/ })).toBeEnabled()
 
-    expect(screen.getByRole('button', { name: /新增 Board/i })).toBeDisabled()
+    expect(screen.getByRole('button', { name: /新增 Board/i })).toBeEnabled()
     for (const button of screen.getAllByRole('button', { name: /新增 task/ })) {
-      expect(button).toBeDisabled()
+      expect(button).toBeEnabled()
     }
+    expect(screen.getByRole('button', { name: /AI 拆任務/ })).toBeDisabled()
   })
 })

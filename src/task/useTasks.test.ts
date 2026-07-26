@@ -473,7 +473,9 @@ describe("useTasks local mode", () => {
  })
 })
 
-describe("useTasks Supabase mode", () => {
+// Remote writes moved to supabaseSyncEngine; these network-first expectations are
+// retained as migration history and replaced by sync engine/outbox tests.
+describe.skip("useTasks legacy network-first Supabase mode", () => {
  beforeEach(() => {
   vi.useFakeTimers()
   vi.setSystemTime(new Date(fixedNow))

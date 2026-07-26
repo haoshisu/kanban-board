@@ -2,6 +2,7 @@ import { clearCachedBoards } from "./boardCacheRepository";
 import { getLocalReplicaDb } from "./localReplicaDb";
 import { flushLocalReplicaWrites } from "./localReplicaWriteQueue";
 import { clearCachedTasks } from "./taskCacheRepository";
+import { clearPendingMutations } from "./pendingMutationRepository";
 
 const clearCachedMetadata = async (ownerId: string) => {
  const database = await getLocalReplicaDb();
@@ -19,5 +20,6 @@ export const clearLocalReplicaForOwner = async (ownerId: string) => {
   clearCachedBoards(ownerId),
   clearCachedTasks(ownerId),
   clearCachedMetadata(ownerId),
+  clearPendingMutations(ownerId),
  ]);
 };

@@ -2,7 +2,7 @@ import { openDB, type IDBPDatabase } from "idb";
 import type { LocalReplicaSchema } from "./localReplicaTypes";
 
 export const LOCAL_REPLICA_DB_NAME = "kanban-board-local-replica";
-export const LOCAL_REPLICA_DB_VERSION = 1;
+export const LOCAL_REPLICA_DB_VERSION = 2;
 
 let databasePromise: Promise<IDBPDatabase<LocalReplicaSchema>> | undefined;
 
@@ -33,6 +33,15 @@ export const getLocalReplicaDb = () => {
      });
 
      metadataStore.createIndex("by-owner", "ownerId");
+    }
+
+    if (!database.objectStoreNames.contains("pendingMutations")) {
+     const mutationStore = database.createObjectStore("pendingMutations", {
+      keyPath: ["ownerId", "entityType", "entityId"],
+     });
+
+     mutationStore.createIndex("by-owner", "ownerId");
+     mutationStore.createIndex("by-owner-board", ["ownerId", "boardId"]);
     }
    },
   });
