@@ -17,6 +17,13 @@ import {
  replaceCachedTasks,
  upsertCachedTask,
 } from "./taskCacheRepository";
+import {
+ acknowledgeMutation,
+ readPendingMutations,
+ stageBoardDelete,
+ stageBoardUpsert,
+ stageTaskUpsert,
+} from "./pendingMutationRepository";
 
 const createBoard = (overrides: Partial<Board> = {}): Board => ({
  id: "board-1",
@@ -150,6 +157,76 @@ describe("task cache repository", () => {
   expect(await readCachedTasks("owner-1", "board-1")).toEqual([]);
   expect(await readCachedTasks("owner-1", "board-2")).toEqual([
    createTask({ id: "task-3", boardId: "board-2" }),
+  ]);
+ });
+});
+
+describe("pending mutation repository", () => {
+ it("atomically stores a board and its pending upsert", async () => {
+  const board = createBoard();
+
+  await stageBoardUpsert("owner-1", board);
+
+  expect(await readCachedBoards("owner-1")).toEqual([board]);
+  expect(await readPendingMutations("owner-1")).toMatchObject([
+   {
+    entityType: "board",
+    entityId: "board-1",
+    operation: "upsert",
+    baseVersion: 1,
+    payload: board,
+   },
+  ]);
+ });
+
+ it("coalesces repeated task updates while preserving the server base version", async () => {
+  await stageTaskUpsert("owner-1", createTask({ title: "First", version: 2 }));
+  await stageTaskUpsert("owner-1", createTask({ title: "Latest", version: 2 }));
+
+  const mutations = await readPendingMutations("owner-1");
+
+  expect(mutations).toHaveLength(1);
+  expect(mutations[0]).toMatchObject({
+   entityType: "task",
+   operation: "upsert",
+   baseVersion: 2,
+   payload: { title: "Latest" },
+  });
+ });
+
+ it("does not acknowledge a newer mutation with an older in-flight token", async () => {
+  await stageTaskUpsert("owner-1", createTask({ title: "First", version: 1 }));
+  const [inFlight] = await readPendingMutations("owner-1");
+  await stageTaskUpsert("owner-1", createTask({ title: "Newer", version: 1 }));
+
+  await acknowledgeMutation(inFlight, createTask({ title: "First", version: 2 }));
+
+  expect(await readPendingMutations("owner-1")).toMatchObject([
+   {
+    baseVersion: 2,
+    payload: { title: "Newer", version: 2 },
+   },
+  ]);
+  expect(await readCachedTasks("owner-1", "board-1")).toMatchObject([
+   { title: "Newer", version: 2 },
+  ]);
+ });
+
+ it("deleting a board removes cached children and their pending writes", async () => {
+  const board = createBoard();
+  await stageBoardUpsert("owner-1", board);
+  await stageTaskUpsert("owner-1", createTask());
+
+  await stageBoardDelete("owner-1", board);
+
+  expect(await readCachedBoards("owner-1")).toEqual([]);
+  expect(await readCachedTasks("owner-1", "board-1")).toEqual([]);
+  expect(await readPendingMutations("owner-1")).toMatchObject([
+   {
+    entityType: "board",
+    entityId: "board-1",
+    operation: "delete",
+   },
   ]);
  });
 });

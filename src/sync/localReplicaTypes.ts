@@ -23,6 +23,24 @@ export type SyncMetadataRecord = {
  lastSyncedAt: number;
 };
 
+export type PendingEntityType = "board" | "task";
+export type PendingOperation = "upsert" | "delete";
+
+export type PendingMutation = {
+ ownerId: string;
+ entityType: PendingEntityType;
+ entityId: string;
+ boardId?: string;
+ operation: PendingOperation;
+ mutationId: string;
+ baseVersion: number;
+ payload: Board | Task | null;
+ createdAt: number;
+ updatedAt: number;
+ attempts: number;
+ lastError?: string;
+};
+
 export interface LocalReplicaSchema extends DBSchema {
  boards: {
   key: [string, string];
@@ -46,6 +64,15 @@ export interface LocalReplicaSchema extends DBSchema {
   value: SyncMetadataRecord;
   indexes: {
    "by-owner": string;
+  };
+ };
+
+ pendingMutations: {
+  key: [string, PendingEntityType, string];
+  value: PendingMutation;
+  indexes: {
+   "by-owner": string;
+   "by-owner-board": [string, string];
   };
  };
 }

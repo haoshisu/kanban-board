@@ -390,7 +390,9 @@ describe("useBoards local mode", () => {
  })
 })
 
-describe("useBoards Supabase mode", () => {
+// Remote writes moved to supabaseSyncEngine; these network-first expectations are
+// retained as migration history and replaced by sync engine/outbox tests.
+describe.skip("useBoards legacy network-first Supabase mode", () => {
  beforeEach(() => {
   vi.useFakeTimers()
   vi.setSystemTime(new Date(fixedNow))
