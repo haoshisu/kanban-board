@@ -20,7 +20,8 @@ import { enqueueLocalReplicaWrite } from "../sync/localReplicaWriteQueue"
 import { persistBoardRealtimePayload } from "../sync/boardRealtimeCache"
 import { deleteCachedTasksByBoard } from "../sync/taskCacheRepository"
 
-export const BOARD_SELECT_COLUMNS = "id, owner_id, name, description, version, created_at, updated_at" as const
+export const BOARD_SELECT_COLUMNS =
+ "id, owner_id, name, description, version, created_at, updated_at" as const
 
 const createOptimisticId = () => {
  if (crypto.randomUUID) {
@@ -41,7 +42,9 @@ export const useBoards = (ownerId: string | undefined) => {
  const localDataMode = isLocalDataMode()
  const dataKey = `${ownerId ?? ""}::${localDataMode ? "local" : "remote"}`
 
- const [boards, setBoards] = useState<Board[]>(() => (ownerId ? computeSyncBoards(localDataMode) : []))
+ const [boards, setBoards] = useState<Board[]>(() =>
+  ownerId ? computeSyncBoards(localDataMode) : [],
+ )
  const [selectedBoardId, setSelectedBoardId] = useState<string | null>(() =>
   ownerId ? (computeSyncBoards(localDataMode)[0]?.id ?? null) : null,
  )
@@ -127,9 +130,8 @@ export const useBoards = (ownerId: string | undefined) => {
     // - 畫面不用等待 IndexedDB 寫完。
     // - IndexedDB 失敗不能阻止 Supabase 資料顯示。
     // - 但失敗仍會由 captureAppError 記錄。
-    void enqueueLocalReplicaWrite(
-     `boards:${ownerId}`,
-     () => replaceCachedBoards(ownerId, nextBoards),
+    void enqueueLocalReplicaWrite(`boards:${ownerId}`, () =>
+     replaceCachedBoards(ownerId, nextBoards),
     ).catch((error: unknown) => {
      captureAppError(error, { area: "local-replica", action: "replaceBoards", ownerId })
     })
@@ -175,9 +177,8 @@ export const useBoards = (ownerId: string | undefined) => {
    })
 
    if (ownerId) {
-    void enqueueLocalReplicaWrite(
-     `boards:${ownerId}`,
-     () => persistBoardRealtimePayload(ownerId, payload),
+    void enqueueLocalReplicaWrite(`boards:${ownerId}`, () =>
+     persistBoardRealtimePayload(ownerId, payload),
     ).catch((error: unknown) => {
      captureAppError(error, {
       area: "local-replica",
@@ -189,9 +190,8 @@ export const useBoards = (ownerId: string | undefined) => {
     if (payload.eventType === "DELETE" && typeof payload.old.id === "string") {
      const deletedBoardId = payload.old.id
 
-     void enqueueLocalReplicaWrite(
-      `tasks:${ownerId}:${deletedBoardId}`,
-      () => deleteCachedTasksByBoard(ownerId, deletedBoardId),
+     void enqueueLocalReplicaWrite(`tasks:${ownerId}:${deletedBoardId}`, () =>
+      deleteCachedTasksByBoard(ownerId, deletedBoardId),
      ).catch((error: unknown) => {
       captureAppError(error, {
        area: "local-replica",
@@ -218,9 +218,8 @@ export const useBoards = (ownerId: string | undefined) => {
   (board: Board) => {
    if (!ownerId) return
 
-   void enqueueLocalReplicaWrite(
-    `boards:${ownerId}`,
-    () => upsertCachedBoard(ownerId, board),
+   void enqueueLocalReplicaWrite(`boards:${ownerId}`, () =>
+    upsertCachedBoard(ownerId, board),
    ).catch((error: unknown) => {
     captureAppError(error, {
      area: "local-replica",
@@ -237,9 +236,8 @@ export const useBoards = (ownerId: string | undefined) => {
   (boardId: string) => {
    if (!ownerId) return
 
-   void enqueueLocalReplicaWrite(
-    `boards:${ownerId}`,
-    () => deleteCachedBoard(ownerId, boardId),
+   void enqueueLocalReplicaWrite(`boards:${ownerId}`, () =>
+    deleteCachedBoard(ownerId, boardId),
    ).catch((error: unknown) => {
     captureAppError(error, {
      area: "local-replica",
@@ -249,9 +247,8 @@ export const useBoards = (ownerId: string | undefined) => {
     })
    })
 
-   void enqueueLocalReplicaWrite(
-    `tasks:${ownerId}:${boardId}`,
-    () => deleteCachedTasksByBoard(ownerId, boardId),
+   void enqueueLocalReplicaWrite(`tasks:${ownerId}:${boardId}`, () =>
+    deleteCachedTasksByBoard(ownerId, boardId),
    ).catch((error: unknown) => {
     captureAppError(error, {
      area: "local-replica",
@@ -336,7 +333,9 @@ export const useBoards = (ownerId: string | undefined) => {
     setBoards((currentBoards) => {
      const nextBoards = currentBoards.filter((board) => board.id !== optimisticBoard.id)
 
-     setSelectedBoardId((currentId) => (currentId === optimisticBoard.id ? (nextBoards[0]?.id ?? null) : currentId))
+     setSelectedBoardId((currentId) =>
+      currentId === optimisticBoard.id ? (nextBoards[0]?.id ?? null) : currentId,
+     )
 
      return nextBoards
     })
@@ -385,7 +384,9 @@ export const useBoards = (ownerId: string | undefined) => {
     updatedAt: new Date().toISOString(),
    }
 
-   setBoards((currentBoards) => currentBoards.map((board) => (board.id === id ? optimisticBoard : board)))
+   setBoards((currentBoards) =>
+    currentBoards.map((board) => (board.id === id ? optimisticBoard : board)),
+   )
 
    if (isLocalDataMode()) {
     const localUpdatedBoard = {
@@ -430,7 +431,9 @@ export const useBoards = (ownerId: string | undefined) => {
 
    if (error) {
     setBoardError(error.message)
-    setBoards((currentBoards) => currentBoards.map((board) => (board.id === id ? previousBoard : board)))
+    setBoards((currentBoards) =>
+     currentBoards.map((board) => (board.id === id ? previousBoard : board)),
+    )
     return null
    }
 

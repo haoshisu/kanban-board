@@ -73,7 +73,7 @@ export default function BoardPage({ userEmail, userId, onLogout }: BoardPageProp
  const { boards, selectedBoard, isLoadingBoards, boardError, selectBoard, createBoard, updateBoard, deleteBoard } =
   useBoards(userId);
  const { tasks, isLoadingTasks, taskError, createTask, updateTask, deleteTask, moveTaskStatus, deleteTasksByBoard } =
-  useTasks(selectedBoard?.id ?? null, userId);
+  useTasks(selectedBoard?.id ?? null, userId, isOnline);
  const [isCreatingBoard, setIsCreatingBoard] = useState(false);
  const [editingBoard, setEditingBoard] = useState<Board | null>(null);
  const [creatingTaskStatus, setCreatingTaskStatus] = useState<BoardStatus | null>(null);

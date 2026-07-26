@@ -40,13 +40,15 @@ const computeSyncTasks = (boardId: string | null, localDataMode: boolean): Task[
  return []
 }
 
-export const useTasks = (boardId: string | null, ownerId?: string) => {
+export const useTasks = (boardId: string | null, ownerId?: string, isOnline = true) => {
  const localDataMode = isLocalDataMode()
  const dataKey = `${ownerId ?? ""}::${boardId ?? ""}::${localDataMode ? "local" : "remote"}`
 
  const [tasks, setTasks] = useState<Task[]>(() => computeSyncTasks(boardId, localDataMode))
  const [loadedDataKey, setLoadedDataKey] = useState(dataKey)
- const [isLoadingTasks, setIsLoadingTasks] = useState(Boolean(boardId) && !localDataMode)
+ const [isLoadingTasks, setIsLoadingTasks] = useState(
+  Boolean(boardId) && !localDataMode && isOnline,
+ )
  const [taskError, setTaskError] = useState("")
  const loadRequestIdRef = useRef(0)
  const liveDataRevisionRef = useRef(0)
@@ -59,7 +61,7 @@ export const useTasks = (boardId: string | null, ownerId?: string) => {
   setLoadedDataKey(dataKey)
   setTaskError("")
   setTasks(computeSyncTasks(boardId, localDataMode))
-  setIsLoadingTasks(Boolean(boardId) && !localDataMode)
+  setIsLoadingTasks(Boolean(boardId) && !localDataMode && isOnline)
  }
 
  const sortedTasks = useMemo(() => {
@@ -76,7 +78,7 @@ export const useTasks = (boardId: string | null, ownerId?: string) => {
 
  const refreshTasks = useCallback(
   async (showLoading = false) => {
-   if (!boardId || localDataMode) return
+   if (!boardId || localDataMode || !isOnline) return
 
    const requestId = ++loadRequestIdRef.current
    isSnapshotInFlightRef.current = true
@@ -137,7 +139,7 @@ export const useTasks = (boardId: string | null, ownerId?: string) => {
     }
    }
   },
-  [boardId, localDataMode, ownerId],
+  [boardId, isOnline, localDataMode, ownerId],
  )
 
  const handleTaskRealtimeChange = useCallback(
@@ -169,7 +171,7 @@ export const useTasks = (boardId: string | null, ownerId?: string) => {
  const taskRealtimeStatus = useRealtimeTableRefresh({
   channelName: `tasks:${boardId ?? "none"}`,
   table: "tasks",
-  enabled: Boolean(boardId) && !localDataMode,
+  enabled: Boolean(boardId) && !localDataMode && isOnline,
   onChange: handleTaskRealtimeChange,
   onRefresh: () => refreshTasks(false),
  })
@@ -624,6 +626,8 @@ export const useTasks = (boardId: string | null, ownerId?: string) => {
 
   if (!boardId || localDataMode) return
 
+  if (!isOnline) return
+
   // refreshTasks 一開始會同步呼叫 setIsLoadingTasks(true) 才開始 fetch，
   // 這是標準的「開始 fetch 前先亮 loading」寫法（React 官方 data-fetching effect 範例也是這樣），
   // 不是可以搬到 render 當下算的「衍生狀態」，因此保留並關閉這條規則。
@@ -633,14 +637,17 @@ export const useTasks = (boardId: string | null, ownerId?: string) => {
   return () => {
    loadRequestIdRef.current += 1
   }
- }, [boardId, localDataMode, refreshTasks])
+ }, [boardId, isOnline, localDataMode, refreshTasks])
 
- useSyncRecovery(() => refreshTasks(false), Boolean(boardId) && !localDataMode)
+ useSyncRecovery(
+  () => refreshTasks(false),
+  Boolean(boardId) && !localDataMode && isOnline,
+ )
 
  return {
   tasks: sortedTasks,
-  isLoadingTasks,
-  taskError,
+  isLoadingTasks: isOnline ? isLoadingTasks : false,
+  taskError: isOnline ? taskError : "",
   taskRealtimeStatus,
   createTask,
   updateTask,
