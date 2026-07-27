@@ -46,16 +46,11 @@ function TaskColumnsSkeleton({ statuses }: { statuses: BoardStatus[] }) {
  return (
   <div aria-label="載入 tasks" className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
    {statuses.map((status) => (
-    <section
-     className="min-h-52 rounded-lg border border-ink-muted/30 bg-card/50 p-4"
-     key={status.key}
-    >
+    <section className="min-h-52 rounded-lg border border-ink-muted/30 bg-card/50 p-4" key={status.key}>
      <div
       className={`-mx-4 -mt-4 flex items-center justify-between gap-3 rounded-t-lg px-4 py-2 ${statusStyles[status.key].headerTint}`}
      >
-      <h3 className="font-display text-sm font-semibold uppercase tracking-wide text-ink">
-       {status.title}
-      </h3>
+      <h3 className="font-display text-sm font-semibold uppercase tracking-wide text-ink">{status.title}</h3>
       <span className="rounded-full bg-card px-2 py-1 text-xs font-medium text-ink-muted">0</span>
      </div>
      <div className="mt-4 h-9 rounded-[5px] border border-dashed border-ink-muted/40 bg-card/60" />
@@ -74,26 +69,10 @@ function TaskColumnsSkeleton({ statuses }: { statuses: BoardStatus[] }) {
 
 export default function BoardPage({ userEmail, userId, onLogout }: BoardPageProps) {
  const { isOnline, retrySync, syncState } = useOfflineSync()
- const {
-  boards,
-  selectedBoard,
-  isLoadingBoards,
-  boardError,
-  selectBoard,
-  createBoard,
-  updateBoard,
-  deleteBoard,
- } = useBoards(userId)
- const {
-  tasks,
-  isLoadingTasks,
-  taskError,
-  createTask,
-  updateTask,
-  deleteTask,
-  moveTaskStatus,
-  deleteTasksByBoard,
- } = useTasks(selectedBoard?.id ?? null, userId)
+ const { boards, selectedBoard, isLoadingBoards, boardError, selectBoard, createBoard, updateBoard, deleteBoard } =
+  useBoards(userId)
+ const { tasks, isLoadingTasks, taskError, createTask, updateTask, deleteTask, moveTaskStatus, deleteTasksByBoard } =
+  useTasks(selectedBoard?.id ?? null, userId)
  const [isCreatingBoard, setIsCreatingBoard] = useState(false)
  const [editingBoard, setEditingBoard] = useState<Board | null>(null)
  const [creatingTaskStatus, setCreatingTaskStatus] = useState<BoardStatus | null>(null)
@@ -144,12 +123,9 @@ export default function BoardPage({ userEmail, userId, onLogout }: BoardPageProp
   setCreatingTaskStatus(status)
  }, [])
 
- const handleGenerateAiTasks = useCallback(
-  async (prompt: string): Promise<AiTaskBreakdownResult> => {
-   return generateTaskBreakdown(prompt)
-  },
-  [],
- )
+ const handleGenerateAiTasks = useCallback(async (prompt: string): Promise<AiTaskBreakdownResult> => {
+  return generateTaskBreakdown(prompt)
+ }, [])
 
  const handleCreateAiTasks = useCallback(
   async (inputs: TaskInput[]) => {
@@ -215,9 +191,7 @@ export default function BoardPage({ userEmail, userId, onLogout }: BoardPageProp
     <header className="mb-6">
      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
       <div>
-       <h1 className="mt-2 font-display text-3xl font-bold uppercase tracking-wide text-ink">
-        Board 管理
-       </h1>
+       <h1 className="mt-2 font-display text-3xl font-bold uppercase tracking-wide text-ink">Board 管理</h1>
       </div>
 
       {userEmail && onLogout ? (
@@ -241,7 +215,7 @@ export default function BoardPage({ userEmail, userId, onLogout }: BoardPageProp
      <div
       aria-live="polite"
       className={`mb-6 flex flex-col gap-2 rounded-lg border p-3 text-sm sm:flex-row sm:items-center sm:justify-between ${
-       syncState.status === "error"
+       syncState.status === "error" || syncState.status === "blocked"
         ? "border-error/40 bg-error/10 text-error"
         : "border-amber-500/40 bg-amber-50 text-amber-900"
       }`}
@@ -251,7 +225,9 @@ export default function BoardPage({ userEmail, userId, onLogout }: BoardPageProp
         ? `目前離線，${syncState.pendingCount} 項變更將在恢復連線後同步。`
         : syncState.status === "syncing"
           ? `正在同步 ${syncState.pendingCount} 項變更…`
-          : `尚有 ${syncState.pendingCount} 項變更同步失敗：${syncState.message}`}
+          : syncState.status === "blocked"
+            ? `尚有 ${syncState.pendingCount} 項變更需要處理：${syncState.message}`
+            : `尚有 ${syncState.pendingCount} 項變更同步失敗：${syncState.message}`}
       </span>
       {syncState.status === "error" ? (
        <button
@@ -269,25 +245,17 @@ export default function BoardPage({ userEmail, userId, onLogout }: BoardPageProp
      <aside className="space-y-6">
       <section>
        <div className="mb-3 flex items-center justify-between gap-3">
-        <h2 className="font-display text-lg font-semibold uppercase tracking-wide text-ink">
-         Boards
-        </h2>
+        <h2 className="font-display text-lg font-semibold uppercase tracking-wide text-ink">Boards</h2>
         <span className="text-sm text-ink-muted">{boards.length} 個</span>
        </div>
 
-       <button
-        className={`mb-3 w-full ${primaryButtonClassName}`}
-        onClick={handleStartCreateBoard}
-        type="button"
-       >
+       <button className={`mb-3 w-full ${primaryButtonClassName}`} onClick={handleStartCreateBoard} type="button">
         + 新增 Board
        </button>
 
        <div className="space-y-3">
         {boardError ? (
-         <div className="rounded-lg border border-error bg-error/10 p-4 text-sm text-error">
-          {boardError}
-         </div>
+         <div className="rounded-lg border border-error bg-error/10 p-4 text-sm text-error">{boardError}</div>
         ) : null}
 
         {isLoadingBoards ? (
@@ -305,10 +273,7 @@ export default function BoardPage({ userEmail, userId, onLogout }: BoardPageProp
           />
          ))
         ) : (
-         <EmptyState
-          description="建立第一個 board 後，就可以開始整理工作狀態。"
-          title="尚未建立 board"
-         />
+         <EmptyState description="建立第一個 board 後，就可以開始整理工作狀態。" title="尚未建立 board" />
         )}
        </div>
       </section>
@@ -318,9 +283,7 @@ export default function BoardPage({ userEmail, userId, onLogout }: BoardPageProp
       {isCreatingBoard ? (
        <div>
         <div className="mb-3 flex items-center justify-between gap-3">
-         <h2 className="font-display text-lg font-semibold uppercase tracking-wide text-ink">
-          新增 board
-         </h2>
+         <h2 className="font-display text-lg font-semibold uppercase tracking-wide text-ink">新增 board</h2>
         </div>
         <BoardForm
          disabled={false}
@@ -340,9 +303,7 @@ export default function BoardPage({ userEmail, userId, onLogout }: BoardPageProp
       {editingBoard ? (
        <div>
         <div className="mb-3 flex items-center justify-between gap-3">
-         <h2 className="font-display text-lg font-semibold uppercase tracking-wide text-ink">
-          修改 board
-         </h2>
+         <h2 className="font-display text-lg font-semibold uppercase tracking-wide text-ink">修改 board</h2>
         </div>
         <BoardForm
          board={editingBoard}
@@ -364,12 +325,8 @@ export default function BoardPage({ userEmail, userId, onLogout }: BoardPageProp
        <div className="rounded-lg border border-ink-muted/40 bg-card p-4 sm:p-6">
         <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
          <div>
-          <h2 className="font-display text-2xl font-bold uppercase tracking-wide text-ink">
-           {selectedBoard.name}
-          </h2>
-          <p className="mt-2 text-sm leading-6 text-ink-muted">
-           {selectedBoard.description || "沒有描述"}
-          </p>
+          <h2 className="font-display text-2xl font-bold uppercase tracking-wide text-ink">{selectedBoard.name}</h2>
+          <p className="mt-2 text-sm leading-6 text-ink-muted">{selectedBoard.description || "沒有描述"}</p>
          </div>
 
          <button
@@ -396,10 +353,7 @@ export default function BoardPage({ userEmail, userId, onLogout }: BoardPageProp
         ) : null}
 
         {creatingTaskStatus ? (
-         <Modal
-          onClose={() => setCreatingTaskStatus(null)}
-          title={`新增 task · ${creatingTaskStatus.title}`}
-         >
+         <Modal onClose={() => setCreatingTaskStatus(null)} title={`新增 task · ${creatingTaskStatus.title}`}>
           <TaskForm
            defaultStatusKey={creatingTaskStatus.key}
            disabled={false}
@@ -437,9 +391,7 @@ export default function BoardPage({ userEmail, userId, onLogout }: BoardPageProp
         ) : null}
 
         {taskError ? (
-         <div className="mb-4 rounded-lg border border-error bg-error/10 p-4 text-sm text-error">
-          {taskError}
-         </div>
+         <div className="mb-4 rounded-lg border border-error bg-error/10 p-4 text-sm text-error">{taskError}</div>
         ) : null}
 
         {isLoadingTasks ? (
@@ -463,10 +415,7 @@ export default function BoardPage({ userEmail, userId, onLogout }: BoardPageProp
         )}
        </div>
       ) : (
-       <EmptyState
-        description="建立或選取 board 後，這裡會顯示三個固定任務狀態欄。"
-        title="尚未選取 board"
-       />
+       <EmptyState description="建立或選取 board 後，這裡會顯示三個固定任務狀態欄。" title="尚未選取 board" />
       )}
      </section>
     </div>

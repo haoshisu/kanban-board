@@ -25,6 +25,14 @@ export type SyncMetadataRecord = {
 
 export type PendingEntityType = "board" | "task";
 export type PendingOperation = "upsert" | "delete";
+export type PendingMutationStatus = "pending" | "blocked";
+export type PendingFailureKind = "transient" | "conflict" | "permanent";
+
+export type MutationConflict = {
+ detectedAt: number;
+ remoteVersion?: number;
+ remotePayload: Board | Task | null;
+};
 
 export type PendingMutation = {
  ownerId: string;
@@ -37,8 +45,12 @@ export type PendingMutation = {
  payload: Board | Task | null;
  createdAt: number;
  updatedAt: number;
+ status: PendingMutationStatus;
+ failureKind?: PendingFailureKind;
  attempts: number;
+ nextAttemptAt: number;
  lastError?: string;
+ conflict?: MutationConflict;
 };
 
 export interface LocalReplicaSchema extends DBSchema {

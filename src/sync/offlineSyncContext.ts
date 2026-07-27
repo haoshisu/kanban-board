@@ -5,6 +5,7 @@ export type SyncState =
  | { status: "offline"; pendingCount: number }
  | { status: "syncing"; pendingCount: number }
  | { status: "synced"; pendingCount: 0 }
+ | { status: "blocked"; pendingCount: number; message: string }
  | { status: "error"; pendingCount: number; message: string };
 
 export type OfflineSyncContextValue = {
