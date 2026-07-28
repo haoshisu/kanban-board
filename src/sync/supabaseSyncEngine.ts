@@ -207,18 +207,7 @@ const deleteTask = async (mutation: PendingMutation) => {
 
 const deleteBoard = async (mutation: PendingMutation) => {
  const supabase = await getSupabase()
- const remoteBoard = await fetchRemoteBoard(mutation.entityId)
-
- if (!remoteBoard) return
- if (remoteBoard.version !== mutation.baseVersion) {
-  throw conflict("Board 已被修改，無法使用舊版本刪除", mutation, remoteBoard)
- }
-
- const tasksResult = await supabase.from("tasks").delete().eq("board_id", mutation.entityId)
-
- if (tasksResult.error) throw tasksResult.error
-
- const result = await supabase
+ const { data, error } = await supabase
   .from("boards")
   .delete()
   .eq("id", mutation.entityId)
@@ -227,13 +216,15 @@ const deleteBoard = async (mutation: PendingMutation) => {
   .select(BOARD_COLUMNS)
   .maybeSingle()
 
- if (result.error) throw result.error
- if (result.data) return
+ if (error) throw error
+ if (data) return
 
- const latestBoard = await fetchRemoteBoard(mutation.entityId)
- if (!latestBoard) return
+ const remoteBoard = await fetchRemoteBoard(mutation.entityId)
 
- throw conflict("Board 已被修改，無法使用舊版本刪除", mutation, latestBoard)
+ // 已被其他裝置刪除，視為刪除成功，保持 outbox idempotent
+ if (!remoteBoard) return
+ // Board 還存在，表示 version 不同
+ throw conflict("xxx", mutation, remoteBoard)
 }
 
 const syncOneMutation = async (mutation: PendingMutation) => {
