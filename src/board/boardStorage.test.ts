@@ -20,6 +20,7 @@ const board: Board = {
     { key: 'inProgress', title: '進行中' },
     { key: 'done', title: '已完成' },
   ],
+  version: 1,
   createdAt: '2026-06-04T00:00:00.000Z',
   updatedAt: '2026-06-04T00:00:00.000Z',
 }
@@ -49,6 +50,15 @@ describe('boardStorage', () => {
         { ...board, statuses: 'todo' },
       ]),
     )
+
+    expect(loadBoards()).toEqual([board])
+  })
+
+  it('adds version 1 to boards stored before versioning was introduced', () => {
+    const { version, ...legacyBoard } = board
+    void version
+
+    localStorage.setItem(storageKey, JSON.stringify([legacyBoard]))
 
     expect(loadBoards()).toEqual([board])
   })

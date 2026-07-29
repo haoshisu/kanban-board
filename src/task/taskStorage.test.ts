@@ -18,6 +18,7 @@ const task: Task = {
   description: 'Login UX',
   statusKey: 'todo',
   position: 0,
+  version: 1,
   createdAt: '2026-06-04T00:00:00.000Z',
   updatedAt: '2026-06-04T00:00:00.000Z',
 }
@@ -47,6 +48,15 @@ describe('taskStorage', () => {
         { ...task, position: '0' },
       ]),
     )
+
+    expect(loadTasks()).toEqual([task])
+  })
+
+  it('adds version 1 to legacy stored tasks', () => {
+    const legacyTask: Partial<Task> = { ...task }
+    delete legacyTask.version
+
+    localStorage.setItem(storageKey, JSON.stringify([legacyTask]))
 
     expect(loadTasks()).toEqual([task])
   })

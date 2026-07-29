@@ -7,6 +7,7 @@ export type Task = {
  description: string;
  statusKey: BoardStatusKey;
  position: number;
+ version: number;
  createdAt: string;
  updatedAt: string;
 };

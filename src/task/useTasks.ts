@@ -1,502 +1,390 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { captureAppError } from '../lib/errorReporting'
-import { isLocalDataMode } from '../lib/localDataMode'
-import { getSupabase } from '../lib/supabase'
-import type { BoardStatusKey } from '../board'
-import { loadTasks as loadStoredTasks, saveTasks } from './taskStorage'
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { RealtimePostgresChangesPayload } from "@supabase/supabase-js";
+import type { BoardStatusKey } from "../board";
+import { captureAppError } from "../lib/errorReporting";
+import { isLocalDataMode } from "../lib/localDataMode";
+import { getSupabase } from "../lib/supabase";
+import { useRealtimeTableRefresh } from "../realtime/useRealtimeTableRefresh";
+import { useOfflineSync } from "../sync/offlineSyncContext";
+import { enqueueLocalReplicaWrite } from "../sync/localReplicaWriteQueue";
+import type { PendingMutation } from "../sync/localReplicaTypes";
 import {
-  getNextPosition,
-  mapTaskRow,
-  normalizeTaskInput,
-  statusKeyToDbStatus,
-} from './taskUtils'
-import type { Task, TaskInput } from './types'
-import type { TaskRow } from './taskUtils'
+ stageTaskDelete,
+ stageTaskUpsert,
+} from "../sync/pendingMutationRepository";
+import {
+ deleteCachedTasksByBoard,
+ readCachedTasks,
+ replaceCachedTasks,
+} from "../sync/taskCacheRepository";
+import { persistTaskRealtimePayload } from "../sync/taskRealtimeCache";
+import { applyTaskRealtimePayload } from "./taskRealtime";
+import { loadTasks, saveTasks } from "./taskStorage";
+import {
+ getNextPosition,
+ mapTaskRow,
+ normalizeTaskInput,
+ type TaskRow,
+} from "./taskUtils";
+import type { Task, TaskInput } from "./types";
 
-const createOptimisticId = () => {
-  if (crypto.randomUUID) {
-    return crypto.randomUUID()
-  }
+export const TASK_SELECT_COLUMNS =
+ "id, board_id, title, description, status, position, version, created_at, updated_at" as const;
 
-  return `${Date.now()}-${Math.random().toString(36).slice(2)}`
-}
+const createOptimisticId = () =>
+ crypto.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
-export const useTasks = (boardId: string | null) => {
-  const [tasks, setTasks] = useState<Task[]>([])
-  const [isLoadingTasks, setIsLoadingTasks] = useState(false)
-  const [taskError, setTaskError] = useState('')
-
-  const sortedTasks = useMemo(
-    () => {
-      if (!boardId) {
-        return []
-      }
-
-      return [...tasks].sort((firstTask, secondTask) => {
-        if (firstTask.statusKey !== secondTask.statusKey) {
-          return firstTask.statusKey.localeCompare(secondTask.statusKey)
-        }
-
-        return firstTask.position - secondTask.position
-      })
-    },
-    [boardId, tasks],
+const applyPendingTasks = (
+ tasks: Task[],
+ boardId: string,
+ mutations: PendingMutation[],
+) =>
+ mutations
+  .filter(
+   (mutation) =>
+    mutation.entityType === "task" && mutation.boardId === boardId,
   )
+  .reduce((currentTasks, mutation) => {
+   if (mutation.operation === "delete") {
+    return currentTasks.filter((task) => task.id !== mutation.entityId);
+   }
 
-  useEffect(() => {
-    if (!boardId) {
-      return
+   const task = mutation.payload as Task;
+   const exists = currentTasks.some((currentTask) => currentTask.id === task.id);
+   return exists
+    ? currentTasks.map((currentTask) => (currentTask.id === task.id ? task : currentTask))
+    : [...currentTasks, task];
+  }, tasks);
+
+export const useTasks = (
+ boardId: string | null,
+ ownerId?: string,
+ _legacyIsOnlineOverride?: boolean,
+) => {
+ void _legacyIsOnlineOverride;
+ const localMode = isLocalDataMode();
+ const {
+  isOnline,
+  isRemoteReady,
+  mutations,
+  pendingEntityKeys,
+  requestSync,
+  syncRevision,
+ } = useOfflineSync();
+ const dataKey = `${ownerId ?? ""}::${boardId ?? ""}::${localMode ? "local" : "remote"}`;
+ const initialTasks =
+  boardId && localMode ? loadTasks().filter((task) => task.boardId === boardId) : [];
+ const [tasks, setTasks] = useState<Task[]>(initialTasks);
+ const [loadedDataKey, setLoadedDataKey] = useState(dataKey);
+ const [isLoadingTasks, setIsLoadingTasks] = useState(
+  Boolean(boardId) && !localMode && isOnline,
+ );
+ const [taskError, setTaskError] = useState("");
+ const loadRequestIdRef = useRef(0);
+ const liveDataRevisionRef = useRef(0);
+ const snapshotInFlightRef = useRef(false);
+ const queuedRealtimeRef = useRef<RealtimePostgresChangesPayload<TaskRow>[]>([]);
+
+ if (dataKey !== loadedDataKey) {
+  setLoadedDataKey(dataKey);
+  setTasks(
+   boardId && localMode
+    ? loadTasks().filter((task) => task.boardId === boardId)
+    : [],
+  );
+  setTaskError("");
+  setIsLoadingTasks(Boolean(boardId) && !localMode && isOnline);
+ }
+
+ const sortedTasks = useMemo(
+  () =>
+   [...tasks].sort(
+    (first, second) =>
+     first.statusKey.localeCompare(second.statusKey) ||
+     first.position - second.position,
+   ),
+  [tasks],
+ );
+
+ const refreshTasks = useCallback(
+  async (showLoading = false) => {
+   if (!boardId || !ownerId || localMode || !isOnline || !isRemoteReady) return;
+   const requestId = ++loadRequestIdRef.current;
+   snapshotInFlightRef.current = true;
+   queuedRealtimeRef.current = [];
+   if (showLoading) setIsLoadingTasks(true);
+
+   try {
+    const supabase = await getSupabase();
+    const { data, error } = await supabase
+     .from("tasks")
+     .select(TASK_SELECT_COLUMNS)
+     .eq("board_id", boardId)
+     .order("status", { ascending: true })
+     .order("position", { ascending: true });
+
+    if (requestId !== loadRequestIdRef.current) return;
+    if (error) throw error;
+
+    let remoteTasks = (data ?? []).map(mapTaskRow);
+    for (const payload of queuedRealtimeRef.current) {
+     remoteTasks = applyTaskRealtimePayload(remoteTasks, boardId, payload);
     }
-
-    if (isLocalDataMode()) {
-      let isMounted = true
-
-      const loadLocalTasks = async () => {
-        await Promise.resolve()
-
-        if (!isMounted) {
-          return
-        }
-
-        setTasks(loadStoredTasks().filter((task) => task.boardId === boardId))
-        setIsLoadingTasks(false)
-      }
-
-      void loadLocalTasks()
-
-      return () => {
-        isMounted = false
-      }
-    }
-
-    let isMounted = true
-
-    const loadTasks = async () => {
-      setIsLoadingTasks(true)
-      setTaskError('')
-
-      try {
-        const supabase = await getSupabase()
-
-        const { data, error } = await supabase
-          .from('tasks')
-          .select(
-            'id, board_id, title, description, status, position, created_at, updated_at',
-          )
-          .eq('board_id', boardId)
-          .order('status', { ascending: true })
-          .order('position', { ascending: true })
-
-        if (!isMounted) {
-          return
-        }
-
-        if (error) {
-          setTaskError(error.message)
-          setTasks([])
-          setIsLoadingTasks(false)
-          return
-        }
-
-        setTasks(data.map(mapTaskRow))
-        setIsLoadingTasks(false)
-      } catch (error) {
-        captureAppError(error, {
-          area: 'tasks',
-          action: 'loadTasks',
-          boardId,
-        })
-
-        if (isMounted) {
-          setTaskError('載入 tasks 時發生錯誤，請稍後再試')
-          setTasks([])
-          setIsLoadingTasks(false)
-        }
-      }
-    }
-
-    void loadTasks()
-
-    return () => {
-      isMounted = false
-    }
-  }, [boardId])
-
-  const createTask = useCallback(async (input: TaskInput) => {
-    if (!boardId) {
-      return null
-    }
-
-    const normalizedInput = normalizeTaskInput(input)
-
-    if (!normalizedInput.title) {
-      return null
-    }
-
-    setTaskError('')
-    const now = new Date().toISOString()
-    const optimisticTask: Task = {
-      id: createOptimisticId(),
+    const next = applyPendingTasks(remoteTasks, boardId, mutations);
+    liveDataRevisionRef.current += 1;
+    setTasks(next);
+    void enqueueLocalReplicaWrite(`tasks:${ownerId}:${boardId}`, () =>
+     replaceCachedTasks(ownerId, boardId, next),
+    ).catch((error: unknown) =>
+     captureAppError(error, {
+      area: "local-replica",
+      action: "replaceTasks",
+      ownerId,
       boardId,
-      title: normalizedInput.title,
-      description: normalizedInput.description,
-      statusKey: normalizedInput.statusKey,
-      position: getNextPosition(tasks, normalizedInput.statusKey),
-      createdAt: now,
-      updatedAt: now,
+     }),
+    );
+   } catch (error) {
+    if (requestId !== loadRequestIdRef.current) return;
+    captureAppError(error, { area: "tasks", action: "refreshTasks", boardId });
+    setTaskError("載入 tasks 時發生錯誤，將繼續顯示本機資料");
+   } finally {
+    if (requestId === loadRequestIdRef.current) {
+     snapshotInFlightRef.current = false;
+     queuedRealtimeRef.current = [];
+     setIsLoadingTasks(false);
     }
+   }
+  },
+  [boardId, isOnline, isRemoteReady, localMode, mutations, ownerId],
+ );
 
-    setTasks((currentTasks) => [...currentTasks, optimisticTask])
+ const handleRealtimeChange = useCallback(
+  (payload: RealtimePostgresChangesPayload<TaskRow>) => {
+   const id = payload.eventType === "DELETE" ? payload.old.id : payload.new.id;
+   if (typeof id === "string" && pendingEntityKeys.has(`task:${id}`)) return;
+   if (snapshotInFlightRef.current) queuedRealtimeRef.current.push(payload);
+   liveDataRevisionRef.current += 1;
 
-    if (isLocalDataMode()) {
-      const nextTasks = [...tasks, optimisticTask]
-      const allTasks = [...loadStoredTasks(), optimisticTask]
+   setTasks((current) => applyTaskRealtimePayload(current, boardId, payload));
+   if (!ownerId || !boardId) return;
+   void enqueueLocalReplicaWrite(`tasks:${ownerId}:${boardId}`, () =>
+    persistTaskRealtimePayload(ownerId, boardId, payload),
+   ).catch((error: unknown) =>
+    captureAppError(error, {
+     area: "local-replica",
+     action: "persistTaskRealtime",
+     ownerId,
+     boardId,
+    }),
+   );
+  },
+  [boardId, ownerId, pendingEntityKeys],
+ );
 
-      setTasks(nextTasks)
-      saveTasks(allTasks)
+ const taskRealtimeStatus = useRealtimeTableRefresh({
+  channelName: `tasks:${boardId ?? "none"}`,
+  table: "tasks",
+  enabled: Boolean(boardId) && !localMode && isOnline && isRemoteReady,
+  onChange: handleRealtimeChange,
+  onRefresh: () => refreshTasks(false),
+ });
 
-      return optimisticTask
-    }
+ const createTask = useCallback(
+  async (input: TaskInput) => {
+   if (!boardId || (!ownerId && !localMode)) return null;
+   const normalized = normalizeTaskInput(input);
+   if (!normalized.title) return null;
 
-    let data: TaskRow | null = null
-    let error: { message: string } | null
+   const now = new Date().toISOString();
+   const task: Task = {
+    id: createOptimisticId(),
+    boardId,
+    title: normalized.title,
+    description: normalized.description,
+    statusKey: normalized.statusKey,
+    position: getNextPosition(tasks, normalized.statusKey),
+    version: 0,
+    createdAt: now,
+    updatedAt: now,
+   };
+   setTaskError("");
+   setTasks((current) => [...current, task]);
 
-    try {
-      const supabase = await getSupabase()
-      const result = await supabase
-        .from('tasks')
-        .insert({
-          id: optimisticTask.id,
-          board_id: boardId,
-          title: normalizedInput.title,
-          description: normalizedInput.description,
-          status: statusKeyToDbStatus[normalizedInput.statusKey],
-          position: optimisticTask.position,
-        })
-        .select(
-          'id, board_id, title, description, status, position, created_at, updated_at',
-        )
-        .single()
+   if (localMode) {
+    saveTasks([...loadTasks(), task]);
+    return task;
+   }
 
-      data = result.data
-      error = result.error
-    } catch (caughtError) {
-      captureAppError(caughtError, {
-        area: 'tasks',
-        action: 'createTask',
-        boardId,
-        statusKey: normalizedInput.statusKey,
-      })
-      error = { message: '建立 task 時發生錯誤，請稍後再試' }
-    }
+   try {
+    await stageTaskUpsert(ownerId as string, task);
+    requestSync();
+    return task;
+   } catch (error) {
+    setTasks((current) => current.filter((item) => item.id !== task.id));
+    setTaskError("無法把 Task 儲存到此裝置");
+    captureAppError(error, { area: "local-replica", action: "stageTaskCreate", ownerId });
+    return null;
+   }
+  },
+  [boardId, localMode, ownerId, requestSync, tasks],
+ );
 
-    if (!data && !error) {
-      error = { message: '建立 task 時沒有收到有效資料' }
-    }
+ const updateTask = useCallback(
+  async (id: string, input: TaskInput) => {
+   const normalized = normalizeTaskInput(input);
+   const previous = tasks.find((task) => task.id === id);
+   if (!previous || !normalized.title || (!ownerId && !localMode)) return null;
 
-    if (error) {
-      setTaskError(error.message)
-      setTasks((currentTasks) =>
-        currentTasks.filter((task) => task.id !== optimisticTask.id),
-      )
-      return null
-    }
+   const task: Task = {
+    ...previous,
+    title: normalized.title,
+    description: normalized.description,
+    statusKey: normalized.statusKey,
+    position:
+     previous.statusKey === normalized.statusKey
+      ? previous.position
+      : getNextPosition(tasks, normalized.statusKey),
+    updatedAt: new Date().toISOString(),
+   };
+   setTaskError("");
+   setTasks((current) => current.map((item) => (item.id === id ? task : item)));
 
-    if (!data) {
-      return null
-    }
+   if (localMode) {
+    const localTask = { ...task, version: previous.version + 1 };
+    setTasks((current) => current.map((item) => (item.id === id ? localTask : item)));
+    saveTasks(loadTasks().map((item) => (item.id === id ? localTask : item)));
+    return localTask;
+   }
 
-    const task = mapTaskRow(data)
-    setTasks((currentTasks) =>
-      currentTasks.map((currentTask) =>
-        currentTask.id === optimisticTask.id ? task : currentTask,
-      ),
-    )
+   try {
+    await stageTaskUpsert(ownerId as string, task);
+    requestSync();
+    return task;
+   } catch (error) {
+    setTasks((current) => current.map((item) => (item.id === id ? previous : item)));
+    setTaskError("無法把 Task 修改儲存到此裝置");
+    captureAppError(error, { area: "local-replica", action: "stageTaskUpdate", ownerId });
+    return null;
+   }
+  },
+  [localMode, ownerId, requestSync, tasks],
+ );
 
-    return task
-  }, [boardId, tasks])
+ const deleteTask = useCallback(
+  async (id: string) => {
+   const task = tasks.find((item) => item.id === id);
+   if (!task || (!ownerId && !localMode)) return;
+   setTaskError("");
+   setTasks((current) => current.filter((item) => item.id !== id));
 
-  const updateTask = useCallback(async (id: string, input: TaskInput) => {
-    const normalizedInput = normalizeTaskInput(input)
+   if (localMode) {
+    saveTasks(loadTasks().filter((item) => item.id !== id));
+    return;
+   }
 
-    if (!normalizedInput.title) {
-      return null
-    }
+   try {
+    await stageTaskDelete(ownerId as string, task);
+    requestSync();
+   } catch (error) {
+    setTasks((current) => [...current, task]);
+    setTaskError("無法在此裝置刪除 Task");
+    captureAppError(error, { area: "local-replica", action: "stageTaskDelete", ownerId });
+   }
+  },
+  [localMode, ownerId, requestSync, tasks],
+ );
 
-    const currentTask = tasks.find((task) => task.id === id)
+ const moveTaskStatus = useCallback(
+  async (id: string, statusKey: BoardStatusKey) => {
+   const previous = tasks.find((task) => task.id === id);
+   if (!previous || previous.statusKey === statusKey || (!ownerId && !localMode)) return;
 
-    if (!currentTask) {
-      return null
-    }
+   const task = {
+    ...previous,
+    statusKey,
+    position: getNextPosition(tasks, statusKey),
+    updatedAt: new Date().toISOString(),
+   };
+   setTaskError("");
+   setTasks((current) => current.map((item) => (item.id === id ? task : item)));
 
-    const position =
-      currentTask.statusKey === normalizedInput.statusKey
-        ? currentTask.position
-        : getNextPosition(tasks, normalizedInput.statusKey)
+   if (localMode) {
+    const localTask = { ...task, version: previous.version + 1 };
+    setTasks((current) => current.map((item) => (item.id === id ? localTask : item)));
+    saveTasks(loadTasks().map((item) => (item.id === id ? localTask : item)));
+    return;
+   }
 
-    setTaskError('')
-    const optimisticTask: Task = {
-      ...currentTask,
-      title: normalizedInput.title,
-      description: normalizedInput.description,
-      statusKey: normalizedInput.statusKey,
-      position,
-      updatedAt: new Date().toISOString(),
-    }
+   try {
+    await stageTaskUpsert(ownerId as string, task);
+    requestSync();
+   } catch (error) {
+    setTasks((current) => current.map((item) => (item.id === id ? previous : item)));
+    setTaskError("無法在此裝置儲存拖曳結果");
+    captureAppError(error, { area: "local-replica", action: "stageTaskMove", ownerId });
+   }
+  },
+  [localMode, ownerId, requestSync, tasks],
+ );
 
-    setTasks((currentTasks) =>
-      currentTasks.map((task) => (task.id === id ? optimisticTask : task)),
-    )
+ const deleteTasksByBoard = useCallback(
+  async (targetBoardId: string) => {
+   if (localMode) {
+    saveTasks(loadTasks().filter((task) => task.boardId !== targetBoardId));
+   }
+   setTasks((current) => current.filter((task) => task.boardId !== targetBoardId));
+   if (ownerId && !localMode) {
+    await enqueueLocalReplicaWrite(`tasks:${ownerId}:${targetBoardId}`, () =>
+     deleteCachedTasksByBoard(ownerId, targetBoardId),
+    );
+   }
+  },
+  [localMode, ownerId],
+ );
 
-    if (isLocalDataMode()) {
-      const nextTasks = tasks.map((task) => (task.id === id ? optimisticTask : task))
-      const allTasks = loadStoredTasks().map((task) =>
-        task.id === id ? optimisticTask : task,
-      )
+ useEffect(() => {
+  if (!ownerId || !boardId || localMode) return;
+  let cancelled = false;
+  const revisionAtStart = liveDataRevisionRef.current;
+  void readCachedTasks(ownerId, boardId)
+   .then((cached) => {
+    if (
+     cancelled ||
+     cached.length === 0 ||
+     revisionAtStart !== liveDataRevisionRef.current
+    ) return;
+    setTasks(applyPendingTasks(cached, boardId, mutations));
+    setIsLoadingTasks(false);
+   })
+   .catch((error: unknown) =>
+    captureAppError(error, {
+     area: "local-replica",
+     action: "readTasks",
+     ownerId,
+     boardId,
+    }),
+   );
+  return () => {
+   cancelled = true;
+  };
+ }, [boardId, localMode, mutations, ownerId]);
 
-      setTasks(nextTasks)
-      saveTasks(allTasks)
+ useEffect(() => {
+  if (!boardId || localMode || !isOnline || !isRemoteReady) return;
+  // This starts an external fetch; refreshTasks owns the associated loading state.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+  void refreshTasks(true);
+ }, [boardId, isOnline, isRemoteReady, localMode, refreshTasks, syncRevision]);
 
-      return optimisticTask
-    }
-
-    let data: TaskRow | null = null
-    let error: { message: string } | null
-
-    try {
-      const supabase = await getSupabase()
-      const result = await supabase
-        .from('tasks')
-        .update({
-          title: normalizedInput.title,
-          description: normalizedInput.description,
-          status: statusKeyToDbStatus[normalizedInput.statusKey],
-          position,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', id)
-        .select(
-          'id, board_id, title, description, status, position, created_at, updated_at',
-        )
-        .single()
-
-      data = result.data
-      error = result.error
-    } catch (caughtError) {
-      captureAppError(caughtError, {
-        area: 'tasks',
-        action: 'updateTask',
-        boardId: currentTask.boardId,
-        taskId: id,
-        statusKey: normalizedInput.statusKey,
-      })
-      error = { message: '更新 task 時發生錯誤，請稍後再試' }
-    }
-
-    if (!data && !error) {
-      error = { message: '更新 task 時沒有收到有效資料' }
-    }
-
-    if (error) {
-      setTaskError(error.message)
-      setTasks((currentTasks) =>
-        currentTasks.map((task) => (task.id === id ? currentTask : task)),
-      )
-      return null
-    }
-
-    if (!data) {
-      return null
-    }
-
-    const updatedTask = mapTaskRow(data)
-    setTasks((currentTasks) =>
-      currentTasks.map((task) => (task.id === id ? updatedTask : task)),
-    )
-
-    return updatedTask
-  }, [tasks])
-
-  const deleteTask = useCallback(async (id: string) => {
-    setTaskError('')
-    const deletedTask = tasks.find((task) => task.id === id)
-
-    if (!deletedTask) {
-      return
-    }
-
-    setTasks((currentTasks) => currentTasks.filter((task) => task.id !== id))
-
-    if (isLocalDataMode()) {
-      saveTasks(loadStoredTasks().filter((task) => task.id !== id))
-      return
-    }
-
-    let error: { message: string } | null
-
-    try {
-      const supabase = await getSupabase()
-      const result = await supabase.from('tasks').delete().eq('id', id)
-
-      error = result.error
-    } catch (caughtError) {
-      captureAppError(caughtError, {
-        area: 'tasks',
-        action: 'deleteTask',
-        boardId: deletedTask.boardId,
-        taskId: id,
-      })
-      error = { message: '刪除 task 時發生錯誤，請稍後再試' }
-    }
-
-    if (error) {
-      setTaskError(error.message)
-      setTasks((currentTasks) => [...currentTasks, deletedTask])
-      return
-    }
-  }, [tasks])
-
-  const moveTaskStatus = useCallback(async (id: string, statusKey: BoardStatusKey) => {
-    const currentTask = tasks.find((task) => task.id === id)
-
-    if (!currentTask || currentTask.statusKey === statusKey) {
-      return
-    }
-
-    const nextPosition = getNextPosition(tasks, statusKey)
-
-    setTasks((currentTasks) =>
-      currentTasks.map((task) =>
-        task.id === id
-          ? {
-              ...task,
-              statusKey,
-              position: nextPosition,
-              updatedAt: new Date().toISOString(),
-            }
-          : task,
-      ),
-    )
-
-    if (isLocalDataMode()) {
-      const movedTask = {
-        ...currentTask,
-        statusKey,
-        position: nextPosition,
-        updatedAt: new Date().toISOString(),
-      }
-      const nextTasks = tasks.map((task) => (task.id === id ? movedTask : task))
-      const allTasks = loadStoredTasks().map((task) =>
-        task.id === id ? movedTask : task,
-      )
-
-      setTasks(nextTasks)
-      saveTasks(allTasks)
-
-      return
-    }
-
-    let data: TaskRow | null = null
-    let error: { message: string } | null
-
-    try {
-      const supabase = await getSupabase()
-      const result = await supabase
-        .from('tasks')
-        .update({
-          status: statusKeyToDbStatus[statusKey],
-          position: nextPosition,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', id)
-        .select(
-          'id, board_id, title, description, status, position, created_at, updated_at',
-        )
-        .single()
-
-      data = result.data
-      error = result.error
-    } catch (caughtError) {
-      captureAppError(caughtError, {
-        area: 'tasks',
-        action: 'moveTaskStatus',
-        boardId: currentTask.boardId,
-        taskId: id,
-        statusKey,
-      })
-      error = { message: '移動 task 時發生錯誤，請稍後再試' }
-    }
-
-    if (!data && !error) {
-      error = { message: '移動 task 時沒有收到有效資料' }
-    }
-
-    if (error) {
-      setTaskError(error.message)
-      setTasks((currentTasks) =>
-        currentTasks.map((task) => (task.id === id ? currentTask : task)),
-      )
-      return
-    }
-
-    if (!data) {
-      return
-    }
-
-    const updatedTask = mapTaskRow(data)
-    setTasks((currentTasks) =>
-      currentTasks.map((task) => (task.id === id ? updatedTask : task)),
-    )
-  }, [tasks])
-
-  const deleteTasksByBoard = useCallback(async (targetBoardId: string) => {
-    setTaskError('')
-
-    if (isLocalDataMode()) {
-      saveTasks(loadStoredTasks().filter((task) => task.boardId !== targetBoardId))
-      setTasks((currentTasks) =>
-        currentTasks.filter((task) => task.boardId !== targetBoardId),
-      )
-      return
-    }
-
-    let error: { message: string } | null
-
-    try {
-      const supabase = await getSupabase()
-      const result = await supabase
-        .from('tasks')
-        .delete()
-        .eq('board_id', targetBoardId)
-
-      error = result.error
-    } catch (caughtError) {
-      captureAppError(caughtError, {
-        area: 'tasks',
-        action: 'deleteTasksByBoard',
-        boardId: targetBoardId,
-      })
-      error = { message: '刪除 board tasks 時發生錯誤，請稍後再試' }
-    }
-
-    if (error) {
-      setTaskError(error.message)
-      return
-    }
-
-    setTasks((currentTasks) =>
-      currentTasks.filter((task) => task.boardId !== targetBoardId),
-    )
-  }, [])
-
-  return {
-    tasks: sortedTasks,
-    isLoadingTasks,
-    taskError,
-    createTask,
-    updateTask,
-    deleteTask,
-    moveTaskStatus,
-    deleteTasksByBoard,
-  }
-}
+ return {
+  tasks: sortedTasks,
+  isLoadingTasks: isOnline ? isLoadingTasks : false,
+  taskError,
+  taskRealtimeStatus,
+  createTask,
+  updateTask,
+  deleteTask,
+  moveTaskStatus,
+  deleteTasksByBoard,
+ };
+};

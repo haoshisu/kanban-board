@@ -12,6 +12,7 @@ const {
   loadAuthUserMock,
   saveAuthUserMock,
   setErrorReportingUserMock,
+  clearLocalReplicaForOwnerMock,
 } = vi.hoisted(() => ({
   captureAppErrorMock: vi.fn(),
   clearAuthUserMock: vi.fn(),
@@ -20,6 +21,7 @@ const {
   loadAuthUserMock: vi.fn(),
   saveAuthUserMock: vi.fn(),
   setErrorReportingUserMock: vi.fn(),
+  clearLocalReplicaForOwnerMock: vi.fn(),
 }))
 
 vi.mock('../lib/errorReporting', () => ({
@@ -39,6 +41,10 @@ vi.mock('./authStorage', () => ({
   clearAuthUser: clearAuthUserMock,
   loadAuthUser: loadAuthUserMock,
   saveAuthUser: saveAuthUserMock,
+}))
+
+vi.mock('../sync/clearLocalReplica', () => ({
+  clearLocalReplicaForOwner: clearLocalReplicaForOwnerMock,
 }))
 
 const fixedNow = '2026-06-05T12:00:00.000Z'
@@ -284,6 +290,7 @@ describe('useAuth Supabase mode', () => {
     vi.setSystemTime(new Date(fixedNow))
 
     isLocalDataModeMock.mockReturnValue(false)
+    clearLocalReplicaForOwnerMock.mockResolvedValue(undefined)
   })
 
   afterEach(() => {
@@ -503,7 +510,9 @@ describe('useAuth Supabase mode', () => {
   })
 
   it('logs out through Supabase and clears user state', async () => {
-    const { signOutMock } = createAuthSupabaseMock()
+    const { signOutMock } = createAuthSupabaseMock({
+      sessionUser: createSupabaseUser(),
+    })
 
     const { result } = renderHook(() => useAuth())
     await flushLocalEffect()
@@ -513,6 +522,7 @@ describe('useAuth Supabase mode', () => {
     })
 
     expect(signOutMock).toHaveBeenCalled()
+    expect(clearLocalReplicaForOwnerMock).toHaveBeenCalledWith('user-1')
     expect(result.current.currentUser).toBeNull()
     expect(setErrorReportingUserMock).toHaveBeenLastCalledWith(null)
   })
