@@ -1,355 +1,326 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { captureAppError } from '../lib/errorReporting'
-import { isLocalDataMode } from '../lib/localDataMode'
-import { getSupabase } from '../lib/supabase'
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { RealtimePostgresChangesPayload } from "@supabase/supabase-js";
+import { captureAppError } from "../lib/errorReporting";
+import { isLocalDataMode } from "../lib/localDataMode";
+import { getSupabase } from "../lib/supabase";
+import { useRealtimeTableRefresh } from "../realtime/useRealtimeTableRefresh";
 import {
-  defaultBoardStatuses,
-  loadBoards as loadStoredBoards,
-  saveBoards,
-} from './boardStorage'
-import { mapBoardRow, normalizeBoardInput } from './boardUtils'
-import type { Board, BoardInput } from './types'
-import type { BoardRow } from './boardUtils'
+ deleteCachedTasksByBoard,
+} from "../sync/taskCacheRepository";
+import {
+ readCachedBoards,
+ replaceCachedBoards,
+} from "../sync/boardCacheRepository";
+import { enqueueLocalReplicaWrite } from "../sync/localReplicaWriteQueue";
+import { persistBoardRealtimePayload } from "../sync/boardRealtimeCache";
+import { stageBoardDelete, stageBoardUpsert } from "../sync/pendingMutationRepository";
+import { useOfflineSync } from "../sync/offlineSyncContext";
+import type { PendingMutation } from "../sync/localReplicaTypes";
+import { applyBoardRealtimePayload } from "./boardRealtime";
+import { defaultBoardStatuses, loadBoards, saveBoards } from "./boardStorage";
+import { mapBoardRow, normalizeBoardInput, type BoardRow } from "./boardUtils";
+import type { Board, BoardInput } from "./types";
 
-const createOptimisticId = () => {
-  if (crypto.randomUUID) {
-    return crypto.randomUUID()
-  }
+export const BOARD_SELECT_COLUMNS =
+ "id, owner_id, name, description, version, created_at, updated_at" as const;
 
-  return `${Date.now()}-${Math.random().toString(36).slice(2)}`
-}
+const createOptimisticId = () =>
+ crypto.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+const applyPendingBoards = (boards: Board[], mutations: PendingMutation[]) =>
+ mutations
+  .filter((mutation) => mutation.entityType === "board")
+  .reduce((currentBoards, mutation) => {
+   if (mutation.operation === "delete") {
+    return currentBoards.filter((board) => board.id !== mutation.entityId);
+   }
+
+   const board = mutation.payload as Board;
+   const exists = currentBoards.some((currentBoard) => currentBoard.id === board.id);
+   return exists
+    ? currentBoards.map((currentBoard) => (currentBoard.id === board.id ? board : currentBoard))
+    : [board, ...currentBoards];
+  }, boards);
 
 export const useBoards = (ownerId: string | undefined) => {
-  const [boards, setBoards] = useState<Board[]>([])
-  const [selectedBoardId, setSelectedBoardId] = useState<string | null>(null)
-  const [isLoadingBoards, setIsLoadingBoards] = useState(false)
-  const [boardError, setBoardError] = useState('')
+ const localMode = isLocalDataMode();
+ const {
+  isOnline,
+  isRemoteReady,
+  mutations,
+  pendingEntityKeys,
+  requestSync,
+  syncRevision,
+ } = useOfflineSync();
+ const dataKey = `${ownerId ?? ""}::${localMode ? "local" : "remote"}`;
+ const initialBoards = ownerId && localMode ? loadBoards() : [];
+ const [boards, setBoards] = useState<Board[]>(initialBoards);
+ const [selectedBoardId, setSelectedBoardId] = useState<string | null>(
+  initialBoards[0]?.id ?? null,
+ );
+ const [loadedDataKey, setLoadedDataKey] = useState(dataKey);
+ const [isLoadingBoards, setIsLoadingBoards] = useState(Boolean(ownerId) && !localMode);
+ const [boardError, setBoardError] = useState("");
+ const loadRequestIdRef = useRef(0);
+ const liveDataRevisionRef = useRef(0);
+ const snapshotInFlightRef = useRef(false);
+ const queuedRealtimeRef = useRef<RealtimePostgresChangesPayload<BoardRow>[]>([]);
 
-  const selectedBoard = useMemo(
-    () => boards.find((board) => board.id === selectedBoardId) ?? null,
-    [boards, selectedBoardId],
-  )
+ if (dataKey !== loadedDataKey) {
+  const nextBoards = ownerId && localMode ? loadBoards() : [];
+  setLoadedDataKey(dataKey);
+  setBoards(nextBoards);
+  setSelectedBoardId(nextBoards[0]?.id ?? null);
+  setBoardError("");
+  setIsLoadingBoards(Boolean(ownerId) && !localMode);
+ }
 
-  useEffect(() => {
-    if (!ownerId) {
-      return
+ const selectedBoard = useMemo(
+  () => boards.find((board) => board.id === selectedBoardId) ?? null,
+  [boards, selectedBoardId],
+ );
+
+ const refreshBoards = useCallback(
+  async (showLoading = false) => {
+   if (!ownerId || localMode || !isOnline || !isRemoteReady) return;
+   const requestId = ++loadRequestIdRef.current;
+   snapshotInFlightRef.current = true;
+   queuedRealtimeRef.current = [];
+   if (showLoading) setIsLoadingBoards(true);
+
+   try {
+    const supabase = await getSupabase();
+    const { data, error } = await supabase
+     .from("boards")
+     .select(BOARD_SELECT_COLUMNS)
+     .eq("owner_id", ownerId)
+     .order("updated_at", { ascending: false });
+
+    if (requestId !== loadRequestIdRef.current) return;
+    if (error) throw error;
+
+    let remoteBoards = (data ?? []).map(mapBoardRow);
+    for (const payload of queuedRealtimeRef.current) {
+     remoteBoards = applyBoardRealtimePayload(remoteBoards, ownerId, payload);
     }
-
-    if (isLocalDataMode()) {
-      let isMounted = true
-
-      const loadLocalBoards = async () => {
-        await Promise.resolve()
-
-        if (!isMounted) {
-          return
-        }
-
-        const nextBoards = loadStoredBoards()
-
-        setBoards(nextBoards)
-        setSelectedBoardId(nextBoards[0]?.id ?? null)
-        setIsLoadingBoards(false)
-      }
-
-      void loadLocalBoards()
-
-      return () => {
-        isMounted = false
-      }
+    const nextBoards = applyPendingBoards(remoteBoards, mutations);
+    liveDataRevisionRef.current += 1;
+    setBoards(nextBoards);
+    setSelectedBoardId((currentId) =>
+     nextBoards.some((board) => board.id === currentId)
+      ? currentId
+      : (nextBoards[0]?.id ?? null),
+    );
+    void enqueueLocalReplicaWrite(`boards:${ownerId}`, () =>
+     replaceCachedBoards(ownerId, nextBoards),
+    ).catch((error: unknown) =>
+     captureAppError(error, { area: "local-replica", action: "replaceBoards", ownerId }),
+    );
+   } catch (error) {
+    if (requestId !== loadRequestIdRef.current) return;
+    captureAppError(error, { area: "boards", action: "refreshBoards", ownerId });
+    setBoardError("載入 boards 時發生錯誤，將繼續顯示本機資料");
+   } finally {
+    if (requestId === loadRequestIdRef.current) {
+     snapshotInFlightRef.current = false;
+     queuedRealtimeRef.current = [];
+     setIsLoadingBoards(false);
     }
+   }
+  },
+  [isOnline, isRemoteReady, localMode, mutations, ownerId],
+ );
 
-    let isMounted = true
+ const handleRealtimeChange = useCallback(
+  (payload: RealtimePostgresChangesPayload<BoardRow>) => {
+   const id =
+    payload.eventType === "DELETE"
+     ? payload.old.id
+     : payload.new.id;
+   if (typeof id === "string" && pendingEntityKeys.has(`board:${id}`)) return;
+   if (snapshotInFlightRef.current) queuedRealtimeRef.current.push(payload);
+   liveDataRevisionRef.current += 1;
 
-    const loadBoards = async () => {
-      setIsLoadingBoards(true)
-      setBoardError('')
+   setBoards((current) => {
+    const next = applyBoardRealtimePayload(current, ownerId, payload);
+    setSelectedBoardId((currentId) =>
+     next.some((board) => board.id === currentId) ? currentId : (next[0]?.id ?? null),
+    );
+    return next;
+   });
 
-      try {
-        const supabase = await getSupabase()
+   if (!ownerId) return;
+   void enqueueLocalReplicaWrite(`boards:${ownerId}`, () =>
+    persistBoardRealtimePayload(ownerId, payload),
+   ).catch((error: unknown) =>
+    captureAppError(error, { area: "local-replica", action: "persistBoardRealtime", ownerId }),
+   );
 
-        const { data, error } = await supabase
-          .from('boards')
-          .select('id, name, description, created_at, updated_at')
-          .eq('owner_id', ownerId)
-          .order('updated_at', { ascending: false })
+   if (payload.eventType === "DELETE" && typeof payload.old.id === "string") {
+    void enqueueLocalReplicaWrite(`tasks:${ownerId}:${payload.old.id}`, () =>
+     deleteCachedTasksByBoard(ownerId, payload.old.id as string),
+    );
+   }
+  },
+  [ownerId, pendingEntityKeys],
+ );
 
-        if (!isMounted) {
-          return
-        }
+ const boardRealtimeStatus = useRealtimeTableRefresh({
+  channelName: `boards:${ownerId ?? "anonymous"}`,
+  table: "boards",
+  enabled: Boolean(ownerId) && !localMode && isOnline && isRemoteReady,
+  onChange: handleRealtimeChange,
+  onRefresh: () => refreshBoards(false),
+ });
 
-        if (error) {
-          setBoardError(error.message)
-          setBoards([])
-          setSelectedBoardId(null)
-          setIsLoadingBoards(false)
-          return
-        }
+ const selectBoard = useCallback((id: string) => setSelectedBoardId(id), []);
 
-        const nextBoards = data.map(mapBoardRow)
-        setBoards(nextBoards)
-        setSelectedBoardId((currentId) => {
-          if (nextBoards.some((board) => board.id === currentId)) {
-            return currentId
-          }
+ const createBoard = useCallback(
+  async (input: BoardInput) => {
+   const normalized = normalizeBoardInput(input);
+   if (!ownerId || !normalized.name) return null;
 
-          return nextBoards[0]?.id ?? null
-        })
-        setIsLoadingBoards(false)
-      } catch (error) {
-        captureAppError(error, {
-          area: 'boards',
-          action: 'loadBoards',
-          ownerId,
-        })
+   const now = new Date().toISOString();
+   const board: Board = {
+    id: createOptimisticId(),
+    name: normalized.name,
+    description: normalized.description,
+    statuses: defaultBoardStatuses,
+    version: 0,
+    createdAt: now,
+    updatedAt: now,
+   };
+   setBoardError("");
+   setBoards((current) => [board, ...current]);
+   setSelectedBoardId(board.id);
 
-        if (isMounted) {
-          setBoardError('載入 boards 時發生錯誤，請稍後再試')
-          setBoards([])
-          setSelectedBoardId(null)
-          setIsLoadingBoards(false)
-        }
-      }
-    }
+   if (localMode) {
+    saveBoards([board, ...boards]);
+    return board;
+   }
 
-    void loadBoards()
+   try {
+    await stageBoardUpsert(ownerId, board);
+    requestSync();
+    return board;
+   } catch (error) {
+    setBoards((current) => current.filter((item) => item.id !== board.id));
+    setBoardError("無法把 Board 儲存到此裝置");
+    captureAppError(error, { area: "local-replica", action: "stageBoardCreate", ownerId });
+    return null;
+   }
+  },
+  [boards, localMode, ownerId, requestSync],
+ );
 
-    return () => {
-      isMounted = false
-    }
-  }, [ownerId])
+ const updateBoard = useCallback(
+  async (id: string, input: BoardInput) => {
+   const normalized = normalizeBoardInput(input);
+   const previous = boards.find((board) => board.id === id);
+   if (!previous || !normalized.name || !ownerId) return null;
 
-  const selectBoard = useCallback((id: string) => {
-    setSelectedBoardId(id)
-  }, [])
+   const board = {
+    ...previous,
+    name: normalized.name,
+    description: normalized.description,
+    updatedAt: new Date().toISOString(),
+   };
+   setBoardError("");
+   setBoards((current) => current.map((item) => (item.id === id ? board : item)));
 
-  const createBoard = useCallback(async (input: BoardInput) => {
-    const normalizedInput = normalizeBoardInput(input)
+   if (localMode) {
+    const localBoard = { ...board, version: previous.version + 1 };
+    const next = boards.map((item) => (item.id === id ? localBoard : item));
+    setBoards(next);
+    saveBoards(next);
+    return localBoard;
+   }
 
-    if (!ownerId || !normalizedInput.name) {
-      return null
-    }
+   try {
+    await stageBoardUpsert(ownerId, board);
+    requestSync();
+    return board;
+   } catch (error) {
+    setBoards((current) => current.map((item) => (item.id === id ? previous : item)));
+    setBoardError("無法把 Board 修改儲存到此裝置");
+    captureAppError(error, { area: "local-replica", action: "stageBoardUpdate", ownerId });
+    return null;
+   }
+  },
+  [boards, localMode, ownerId, requestSync],
+ );
 
-    setBoardError('')
-    const now = new Date().toISOString()
-    const optimisticBoard: Board = {
-      id: createOptimisticId(),
-      name: normalizedInput.name,
-      description: normalizedInput.description,
-      statuses: defaultBoardStatuses,
-      createdAt: now,
-      updatedAt: now,
-    }
+ const deleteBoard = useCallback(
+  async (id: string) => {
+   const board = boards.find((item) => item.id === id);
+   if (!board || !ownerId) return;
+   const previousBoards = boards;
+   const previousSelectedId = selectedBoardId;
+   const next = boards.filter((item) => item.id !== id);
+   setBoardError("");
+   setBoards(next);
+   if (selectedBoardId === id) setSelectedBoardId(next[0]?.id ?? null);
 
-    setBoards((currentBoards) => [optimisticBoard, ...currentBoards])
-    setSelectedBoardId(optimisticBoard.id)
+   if (localMode) {
+    saveBoards(next);
+    return;
+   }
 
-    if (isLocalDataMode()) {
-      const nextBoards = [optimisticBoard, ...boards]
+   try {
+    await stageBoardDelete(ownerId, board);
+    requestSync();
+   } catch (error) {
+    setBoards(previousBoards);
+    setSelectedBoardId(previousSelectedId);
+    setBoardError("無法在此裝置刪除 Board");
+    captureAppError(error, { area: "local-replica", action: "stageBoardDelete", ownerId });
+   }
+  },
+  [boards, localMode, ownerId, requestSync, selectedBoardId],
+ );
 
-      setBoards(nextBoards)
-      saveBoards(nextBoards)
+ useEffect(() => {
+  if (!ownerId || localMode) return;
+  let cancelled = false;
+  const revisionAtStart = liveDataRevisionRef.current;
+  void readCachedBoards(ownerId)
+   .then((cached) => {
+    if (
+     cancelled ||
+     cached.length === 0 ||
+     revisionAtStart !== liveDataRevisionRef.current
+    ) return;
+    const next = applyPendingBoards(cached, mutations);
+    setBoards(next);
+    setSelectedBoardId((currentId) =>
+     next.some((board) => board.id === currentId) ? currentId : (next[0]?.id ?? null),
+    );
+    setIsLoadingBoards(false);
+   })
+   .catch((error: unknown) =>
+    captureAppError(error, { area: "local-replica", action: "readBoards", ownerId }),
+   );
+  return () => {
+   cancelled = true;
+  };
+ }, [localMode, mutations, ownerId]);
 
-      return optimisticBoard
-    }
+ useEffect(() => {
+  if (!ownerId || localMode || !isOnline || !isRemoteReady) return;
+  // This starts an external fetch; refreshBoards owns the associated loading state.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+  void refreshBoards(true);
+ }, [isOnline, isRemoteReady, localMode, ownerId, refreshBoards, syncRevision]);
 
-    let data: BoardRow | null = null
-    let error: { message: string } | null
-
-    try {
-      const supabase = await getSupabase()
-      const result = await supabase
-        .from('boards')
-        .insert({
-          id: optimisticBoard.id,
-          owner_id: ownerId,
-          name: normalizedInput.name,
-          description: normalizedInput.description,
-        })
-        .select('id, name, description, created_at, updated_at')
-        .single()
-
-      data = result.data
-      error = result.error
-    } catch (caughtError) {
-      captureAppError(caughtError, {
-        area: 'boards',
-        action: 'createBoard',
-        ownerId,
-      })
-      error = { message: '建立 board 時發生錯誤，請稍後再試' }
-    }
-
-    if (!data && !error) {
-      error = { message: '建立 board 時沒有收到有效資料' }
-    }
-
-    if (error) {
-      setBoardError(error.message)
-      setBoards((currentBoards) => {
-        const nextBoards = currentBoards.filter(
-          (board) => board.id !== optimisticBoard.id,
-        )
-
-        setSelectedBoardId((currentId) =>
-          currentId === optimisticBoard.id ? nextBoards[0]?.id ?? null : currentId,
-        )
-
-        return nextBoards
-      })
-      return null
-    }
-
-    if (!data) {
-      return null
-    }
-
-    const board = mapBoardRow(data)
-    setBoards((currentBoards) =>
-      currentBoards.map((currentBoard) =>
-        currentBoard.id === optimisticBoard.id ? board : currentBoard,
-      ),
-    )
-
-    return board
-  }, [boards, ownerId])
-
-  const updateBoard = useCallback(async (id: string, input: BoardInput) => {
-    const normalizedInput = normalizeBoardInput(input)
-
-    if (!normalizedInput.name) {
-      return null
-    }
-
-    setBoardError('')
-    const previousBoard = boards.find((board) => board.id === id)
-
-    if (!previousBoard) {
-      return null
-    }
-
-    const optimisticBoard: Board = {
-      ...previousBoard,
-      name: normalizedInput.name,
-      description: normalizedInput.description,
-      updatedAt: new Date().toISOString(),
-    }
-
-    setBoards((currentBoards) =>
-      currentBoards.map((board) => (board.id === id ? optimisticBoard : board)),
-    )
-
-    if (isLocalDataMode()) {
-      const nextBoards = boards.map((board) =>
-        board.id === id ? optimisticBoard : board,
-      )
-
-      setBoards(nextBoards)
-      saveBoards(nextBoards)
-
-      return optimisticBoard
-    }
-
-    let data: BoardRow | null = null
-    let error: { message: string } | null
-
-    try {
-      const supabase = await getSupabase()
-      const result = await supabase
-        .from('boards')
-        .update({
-          name: normalizedInput.name,
-          description: normalizedInput.description,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', id)
-        .select('id, name, description, created_at, updated_at')
-        .single()
-
-      data = result.data
-      error = result.error
-    } catch (caughtError) {
-      captureAppError(caughtError, {
-        area: 'boards',
-        action: 'updateBoard',
-        boardId: id,
-      })
-      error = { message: '更新 board 時發生錯誤，請稍後再試' }
-    }
-
-    if (!data && !error) {
-      error = { message: '更新 board 時沒有收到有效資料' }
-    }
-
-    if (error) {
-      setBoardError(error.message)
-      setBoards((currentBoards) =>
-        currentBoards.map((board) => (board.id === id ? previousBoard : board)),
-      )
-      return null
-    }
-
-    if (!data) {
-      return null
-    }
-
-    const updatedBoard = mapBoardRow(data)
-    setBoards((currentBoards) =>
-      currentBoards.map((board) => (board.id === id ? updatedBoard : board)),
-    )
-
-    return updatedBoard
-  }, [boards])
-
-  const deleteBoard = useCallback(async (id: string) => {
-    setBoardError('')
-    const previousBoards = boards
-    const previousSelectedBoardId = selectedBoardId
-    const nextBoards = boards.filter((board) => board.id !== id)
-
-    setBoards(nextBoards)
-
-    if (selectedBoardId === id) {
-      setSelectedBoardId(nextBoards[0]?.id ?? null)
-    }
-
-    if (isLocalDataMode()) {
-      saveBoards(nextBoards)
-      return
-    }
-
-    let error: { message: string } | null
-
-    try {
-      const supabase = await getSupabase()
-      const result = await supabase.from('boards').delete().eq('id', id)
-
-      error = result.error
-    } catch (caughtError) {
-      captureAppError(caughtError, {
-        area: 'boards',
-        action: 'deleteBoard',
-        boardId: id,
-      })
-      error = { message: '刪除 board 時發生錯誤，請稍後再試' }
-    }
-
-    if (error) {
-      setBoardError(error.message)
-      setBoards(previousBoards)
-      setSelectedBoardId(previousSelectedBoardId)
-      return
-    }
-  }, [boards, selectedBoardId])
-
-  return {
-    boards,
-    selectedBoard,
-    isLoadingBoards,
-    boardError,
-    selectBoard,
-    createBoard,
-    updateBoard,
-    deleteBoard,
-  }
-}
+ return {
+  boards,
+  selectedBoard,
+  isLoadingBoards: isOnline ? isLoadingBoards : false,
+  boardError,
+  boardRealtimeStatus,
+  selectBoard,
+  createBoard,
+  updateBoard,
+  deleteBoard,
+ };
+};

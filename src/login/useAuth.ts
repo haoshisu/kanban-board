@@ -7,6 +7,7 @@ import type { Database } from "../lib/database.types";
 import { clearAuthUser, loadAuthUser, saveAuthUser } from "./authStorage";
 import { getNameFromEmail, isValidEmail, mapAuthUser } from "./authUtils";
 import type { AuthUser, LoginInput, LoginResult } from "./types";
+import { clearLocalReplicaForOwner } from "../sync/clearLocalReplica";
 
 const ensureProfile = async (supabase: SupabaseClient<Database>, user: AuthUser) => {
  const { error } = await supabase.from("profiles").upsert(
@@ -212,6 +213,8 @@ export const useAuth = () => {
    return;
   }
 
+  const ownerId = currentUser?.id;
+
   try {
    const supabase = await getSupabase();
    const { error } = await supabase.auth.signOut();
@@ -228,6 +231,18 @@ export const useAuth = () => {
     action: "logout",
    });
   } finally {
+   if (ownerId) {
+    try {
+     await clearLocalReplicaForOwner(ownerId);
+    } catch (error) {
+     captureAppError(error, {
+      area: "local-replica",
+      action: "clearOnLogout",
+      ownerId,
+     });
+    }
+   }
+
    setCurrentUser(null);
    setErrorReportingUser(null);
   }

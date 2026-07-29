@@ -18,6 +18,7 @@ const task: Task = {
   description: 'Login UX',
   statusKey: 'inProgress',
   position: 1,
+  version: 1,
   createdAt: '2026-06-04T00:00:00.000Z',
   updatedAt: '2026-06-04T00:00:00.000Z',
 }
