@@ -1,21 +1,22 @@
-export type BoardStatusKey = "todo" | "inProgress" | "done";
+export type BoardStatusKey = "todo" | "inProgress" | "done"
 
 export type BoardStatus = {
- key: BoardStatusKey;
- title: string;
-};
+ key: BoardStatusKey
+ title: string
+}
 
 export type Board = {
- id: string;
- name: string;
- description: string;
- statuses: BoardStatus[];
- version: number;
- createdAt: string;
- updatedAt: string;
-};
+ id: string
+ ownerId?: string
+ name: string
+ description: string
+ statuses: BoardStatus[]
+ version: number
+ createdAt: string
+ updatedAt: string
+}
 
 export type BoardInput = {
- name: string;
- description: string;
-};
+ name: string
+ description: string
+}

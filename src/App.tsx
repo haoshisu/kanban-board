@@ -57,7 +57,12 @@ function App() {
       element={
        <ProtectedRoute isAuthenticated={isAuthenticated}>
         <OfflineSyncProvider ownerId={currentUser?.id}>
-         <BoardPage userEmail={currentUser?.email} userId={currentUser?.id} onLogout={logout} />
+         <BoardPage
+          userEmail={currentUser?.email}
+          userId={currentUser?.id}
+          userName={currentUser?.name}
+          onLogout={logout}
+         />
         </OfflineSyncProvider>
        </ProtectedRoute>
       }

@@ -1,5 +1,4 @@
 import { DragDropProvider } from "@dnd-kit/react"
-import type { DragEndEvent } from "@dnd-kit/react"
 import { useCallback, useMemo, useState } from "react"
 import { BoardCard } from "./components/BoardCard"
 import { BoardForm } from "./components/BoardForm"
@@ -12,16 +11,21 @@ import { useBoards } from "./useBoards"
 import { AiTaskBreakdownPanel } from "../ai/components/AiTaskBreakdownPanel"
 import { captureAppError } from "../lib/errorReporting"
 import { TaskForm, TaskStatusColumn, useTasks } from "../task"
+import { generateTaskBreakdown } from "../ai/components/service/breakdown-task"
+import { useOfflineSync } from "../sync/offlineSyncContext"
+import { useBoardPresence } from "../realtime/useBoardPresence"
+import { PresenceAvatars } from "./components/PresenceAvatars"
+import { BoardSharingPanel } from "./components/BoardSharingPanel"
+import type { DragEndEvent } from "@dnd-kit/react"
 import type { Board } from "./types"
 import type { BoardStatus } from "./types"
 import type { AiTaskBreakdownResult } from "../ai/components/AiTaskBreakdownPanel"
 import type { Task, TaskInput } from "../task"
-import { generateTaskBreakdown } from "../ai/components/service/breakdown-task"
-import { useOfflineSync } from "../sync/offlineSyncContext"
 
 type BoardPageProps = {
  userEmail?: string
  userId?: string
+ userName?: string
  onLogout?: () => void
 }
 
@@ -67,17 +71,29 @@ function TaskColumnsSkeleton({ statuses }: { statuses: BoardStatus[] }) {
  )
 }
 
-export default function BoardPage({ userEmail, userId, onLogout }: BoardPageProps) {
+export default function BoardPage({ userEmail, userId, userName, onLogout }: BoardPageProps) {
  const { isOnline, retrySync, syncState } = useOfflineSync()
+
  const { boards, selectedBoard, isLoadingBoards, boardError, selectBoard, createBoard, updateBoard, deleteBoard } =
   useBoards(userId)
+
  const { tasks, isLoadingTasks, taskError, createTask, updateTask, deleteTask, moveTaskStatus, deleteTasksByBoard } =
   useTasks(selectedBoard?.id ?? null, userId)
+
+ const presenceMembers = useBoardPresence({
+  boardId: selectedBoard?.id ?? null,
+  userId,
+  userName,
+  enabled: isOnline,
+ })
+ const isBoardOwner = selectedBoard?.ownerId !== undefined && selectedBoard.ownerId === userId
+
  const [isCreatingBoard, setIsCreatingBoard] = useState(false)
  const [editingBoard, setEditingBoard] = useState<Board | null>(null)
  const [creatingTaskStatus, setCreatingTaskStatus] = useState<BoardStatus | null>(null)
  const [editingTask, setEditingTask] = useState<Task | null>(null)
  const [isAiPanelOpen, setIsAiPanelOpen] = useState(false)
+ const [isSharingPanelOpen, setIsSharingPanelOpen] = useState(false)
 
  const tasksByStatus = useMemo(() => groupTasksByStatus(tasks), [tasks])
 
@@ -329,15 +345,23 @@ export default function BoardPage({ userEmail, userId, onLogout }: BoardPageProp
           <p className="mt-2 text-sm leading-6 text-ink-muted">{selectedBoard.description || "沒有描述"}</p>
          </div>
 
-         <button
-          className={isAiPanelOpen ? secondaryButtonClassName : primaryButtonClassName}
-          disabled={!isOnline}
-          title={!isOnline ? "AI 拆任務需要網路連線" : undefined}
-          onClick={() => setIsAiPanelOpen((isOpen) => !isOpen)}
-          type="button"
-         >
-          {isAiPanelOpen ? "關閉 AI 拆任務" : "AI 拆任務"}
-         </button>
+         <div className="flex items-center gap-3">
+          <PresenceAvatars members={presenceMembers} />
+          {isBoardOwner ? (
+           <button type="button" className={secondaryButtonClassName} onClick={() => setIsSharingPanelOpen(true)}>
+            共享
+           </button>
+          ) : null}
+          <button
+           className={isAiPanelOpen ? secondaryButtonClassName : primaryButtonClassName}
+           disabled={!isOnline}
+           title={!isOnline ? "AI 拆任務需要網路連線" : undefined}
+           onClick={() => setIsAiPanelOpen((isOpen) => !isOpen)}
+           type="button"
+          >
+           {isAiPanelOpen ? "關閉 AI 拆任務" : "AI 拆任務"}
+          </button>
+         </div>
         </div>
 
         {isAiPanelOpen ? (
@@ -417,6 +441,9 @@ export default function BoardPage({ userEmail, userId, onLogout }: BoardPageProp
       ) : (
        <EmptyState description="建立或選取 board 後，這裡會顯示三個固定任務狀態欄。" title="尚未選取 board" />
       )}
+      {isSharingPanelOpen && selectedBoard ? (
+       <BoardSharingPanel boardId={selectedBoard.id} onClose={() => setIsSharingPanelOpen(false)} />
+      ) : null}
      </section>
     </div>
    </div>
