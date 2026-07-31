@@ -2,7 +2,7 @@
 
 A Kanban-style task management app built with React, TypeScript, Vite, TailwindCSS, dnd-kit, React Router, Supabase, Gemini, Playwright, and Sentry.
 
-The project focuses on a practical board workflow: authenticated users can create boards, use AI to break a requirement into tasks, manage tasks, and move tasks across statuses with drag-and-drop interactions. It also includes a LocalStorage-backed data mode for stable end-to-end testing and frontend error monitoring for production debugging.
+The project focuses on a practical board workflow: authenticated users can create boards, use AI to break a requirement into tasks, manage tasks, and move tasks across statuses with drag-and-drop interactions. Its local-first synchronization layer keeps confirmed data and pending changes in IndexedDB, supports offline board and task operations, and reconciles changes through Supabase Realtime and background Outbox processing. It also includes a LocalStorage-backed data mode for stable end-to-end testing and frontend error monitoring for production debugging.
 
 Live demo: https://kanban-board-two-tan.vercel.app
 
@@ -18,6 +18,10 @@ Demo account: `you@example.com` / `123`
 - Drag-and-drop task status updates with dnd-kit
 - Optimistic UI updates for faster perceived interactions
 - Supabase persistence for boards, tasks, and user profiles
+- Live board and task updates across active windows with Supabase Realtime
+- IndexedDB local replica for cached server-confirmed data
+- Offline board and task CRUD, including drag-and-drop status changes
+- Durable pending-mutation Outbox with background retry, version conflict detection, and visible sync status
 - LocalStorage-backed e2e mode for stable Playwright tests
 - Responsive UI built with TailwindCSS
 - Playwright coverage for login, board CRUD, task CRUD, and drag-and-drop flows
@@ -33,6 +37,8 @@ Demo account: `you@example.com` / `123`
 - dnd-kit
 - React Router v7
 - Supabase
+- Supabase Realtime
+- IndexedDB through idb
 - Gemini API through a Supabase Edge Function
 - Sentry
 - Playwright
@@ -49,7 +55,9 @@ src/
   board/        Board page, board hooks, board components, board storage
   lib/          Supabase client, Sentry setup, error reporting, database types
   login/        Auth hooks, login page, local auth storage
+  realtime/     Supabase Realtime subscriptions, connectivity, recovery hooks
   shared/       Shared UI components
+  sync/         IndexedDB replica, pending Outbox, background sync engine
   task/         Task hooks, task components, task storage
   utils/        Optional browser metric helpers
 e2e/            Playwright end-to-end tests
@@ -72,6 +80,7 @@ flowchart TB
     LoginRoute["/login<br/>LoginPage"]
     BoardRoute["/board<br/>ProtectedRoute"]
     NotFoundRoute["*<br/>NotFoundPage"]
+    SyncProvider["OfflineSyncProvider<br/>connectivity + sync orchestration"]
   end
 
   subgraph FeatureLayer["Feature modules"]
@@ -85,11 +94,18 @@ flowchart TB
     AiBreakdown["ai/AiTaskBreakdownPanel<br/>review + select suggestions"]
   end
 
-  subgraph DataLayer["Data layer"]
+  subgraph SyncLayer["Local-first sync layer"]
+    RealtimeHook["realtime/useRealtimeTableRefresh<br/>postgres_changes subscription"]
+    LocalReplica["IndexedDB local replica<br/>boards + tasks + pendingMutations"]
+    SyncEngine["sync/supabaseSyncEngine<br/>ordered Outbox flush + version guards"]
+    Snapshot["Authoritative snapshot refresh<br/>subscription + reconnect recovery"]
+  end
+
+  subgraph DataLayer["Remote and test data"]
     SupabaseClient["lib/supabase<br/>lazy Supabase client"]
     LocalMode["lib/localDataMode<br/>kanban-board:e2e"]
     LocalStorage["LocalStorage<br/>authStorage / boardStorage / taskStorage"]
-    Supabase["Supabase<br/>Auth + profiles + boards + tasks"]
+    Supabase["Supabase<br/>Auth + Postgres + Realtime"]
     EdgeFunction["Supabase Edge Function<br/>breakdown-task"]
     Gemini["Gemini API"]
   end
@@ -106,7 +122,7 @@ flowchart TB
   App --> BoardRoute
   App --> NotFoundRoute
   LoginRoute --> AuthHook
-  BoardRoute --> BoardPage
+  BoardRoute --> SyncProvider --> BoardPage
   BoardPage --> BoardComponents
   BoardPage --> TaskComponents
   BoardPage --> BoardHook
@@ -116,9 +132,20 @@ flowchart TB
   AiBreakdown --> EdgeFunction --> Gemini
   Dnd --> TaskHook
   AuthHook --> SupabaseClient
-  BoardHook --> SupabaseClient
-  TaskHook --> SupabaseClient
-  SupabaseClient --> Supabase
+  BoardHook --> LocalReplica
+  TaskHook --> LocalReplica
+  LocalReplica --> BoardHook
+  LocalReplica --> TaskHook
+  BoardHook --> SyncProvider
+  TaskHook --> SyncProvider
+  SyncProvider --> SyncEngine --> SupabaseClient --> Supabase
+  SyncEngine -->|acknowledge confirmed writes| LocalReplica
+  BoardHook --> RealtimeHook
+  TaskHook --> RealtimeHook
+  Supabase -->|postgres_changes| RealtimeHook
+  RealtimeHook -->|version-aware event merge| LocalReplica
+  RealtimeHook --> Snapshot --> SupabaseClient
+  SyncProvider -->|offline / syncing / error status| BoardPage
   AuthHook --> LocalMode
   BoardHook --> LocalMode
   TaskHook --> LocalMode
@@ -131,6 +158,27 @@ flowchart TB
   Main --> Sentry
 ```
 
+## Realtime and Offline Sync
+
+The production data path uses Supabase as the authoritative store and IndexedDB as an owner-scoped local replica. Realtime events speed up propagation between active windows, while snapshot refreshes repair the gap between an initial query and subscription readiness and recover authoritative state after reconnecting.
+
+### Remote change flow
+
+1. Supabase publishes an `INSERT`, `UPDATE`, or `DELETE` event for `boards` or `tasks` through `postgres_changes`.
+2. The relevant feature hook ignores pending local entities, applies newer payloads with a version-aware merge, and persists the result to IndexedDB.
+3. When a channel reaches `SUBSCRIBED`, the hook fetches an authoritative snapshot so events missed during subscription setup are repaired.
+4. Snapshot replacement preserves pending local mutations before the hook renders the merged board or task state.
+
+### Local change flow
+
+1. A board or task action updates the UI immediately.
+2. The entity change and its pending mutation are stored together in IndexedDB before background synchronization is requested.
+3. `OfflineSyncProvider` reads the Outbox and asks `supabaseSyncEngine` to flush board upserts, task upserts, task deletes, and board deletes in dependency-safe order.
+4. Updates and deletes use the mutation's `baseVersion` as an optimistic concurrency guard. Confirmed writes update the local replica and remove the acknowledged Outbox entry.
+5. Transient failures retry with exponential backoff. Version conflicts remain as blocked mutations so the local change is not silently discarded.
+
+The board screen reports offline, syncing, blocked, and failed states. Failed mutations can be retried manually, and logout stays disabled while pending changes remain. AI task breakdown remains network-dependent and is disabled while offline.
+
 ## Technical Trade-offs
 
 | Choice                                             | Core Advantages (Pros)                                                                                                                                                                      | Potential Costs & Risks (Cons)                                                                                                                                                                                                                                 |
@@ -142,6 +190,8 @@ flowchart TB
 | **Optimistic UI Updates**                          | Significantly improves user experience. Operations like CRUD and kanban drag-and-drop receive instant visual feedback, eliminating perceived network latency.                               | Increases the complexity of frontend state management. If a backend write fails, additional robust rollback mechanisms and seamless error notifications must be carefully designed.                                                                            |
 | **LocalStorage E2E Mode (Playwright)**             | Decentralizes the testing environment. E2E tests run independently of real Supabase sessions or remote database states, drastically improving test stability and execution speed.           | The behavior of the mock persistence used in the test environment may not perfectly match the real production Supabase behavior, potentially missing certain edge cases.                                                                                       |
 | **Sentry Monitoring**                              | Establishes error tracking (Observability) in the production environment. Leverages Source Maps to un-minify compressed code, enabling precise production error localization and debugging. | Requires additional DSN configuration and handling source map uploads within the CI/CD pipeline, increasing the complexity of environmental variables management and build workflows.                                                                          |
+| **IndexedDB Local Replica + Durable Outbox**       | Keeps confirmed data available locally and lets board/task changes survive offline sessions or temporary network failures until background synchronization succeeds.                       | Requires explicit cache ownership, ordered mutation processing, retry policy, and conflict state management. IndexedDB schema changes also need careful compatibility handling.                                                                                |
+| **Realtime Notifications + Snapshot Recovery**    | Realtime events quickly propagate changes between active windows, while authoritative snapshots repair missed events during subscription setup or reconnects.                              | Requires Supabase Realtime publication configuration and additional snapshot requests. Event payloads still need version-aware filtering because delivery timing and duplication are not authoritative ordering guarantees.                                    |
 
 ## Observability
 
@@ -197,6 +247,8 @@ The app expects these Supabase tables:
 - `boards`
 - `tasks`
 
+Both `boards` and `tasks` require a numeric `version` column for optimistic concurrency checks. Enable both tables in the Supabase Realtime publication so the client can receive `postgres_changes` events.
+
 The generated type definitions are stored in `src/lib/database.types.ts`.
 
 ### Use AI task breakdown
@@ -251,7 +303,7 @@ The GitHub Actions workflow runs on pushes and pull requests targeting `main`.
 
 這是一個使用 React、TypeScript、Vite、TailwindCSS、dnd-kit、React Router、Supabase、Gemini、Playwright 和 Sentry 建立的 Kanban 任務管理專案。
 
-專案重點是實作實用的看板工作流程：使用者登入後可以建立 board、透過 AI 將需求拆成 tasks、管理 task，並透過拖拉操作更新 task 狀態。專案也提供 LocalStorage-backed data mode，讓 Playwright e2e 測試可以穩定執行，並加入前端錯誤監控，方便 production debugging。
+專案重點是實作實用的看板工作流程：使用者登入後可以建立 board、透過 AI 將需求拆成 tasks、管理 task，並透過拖拉操作更新 task 狀態。Local-first 同步層會將已確認資料與待同步變更保存在 IndexedDB，支援離線操作 board 與 task，再透過 Supabase Realtime 和背景 Outbox 處理同步。專案也提供 LocalStorage-backed data mode，讓 Playwright e2e 測試可以穩定執行，並加入前端錯誤監控，方便 production debugging。
 
 Demo：https://kanban-board-two-tan.vercel.app
 
@@ -267,6 +319,10 @@ Demo：https://kanban-board-two-tan.vercel.app
 - 使用 dnd-kit 實作拖拉更新 task 狀態
 - 使用 optimistic UI update 提升操作回饋速度
 - 使用 Supabase 儲存 profiles、boards 與 tasks
+- 使用 Supabase Realtime 在已開啟的視窗間即時更新 board 與 task
+- 使用 IndexedDB local replica 快取伺服器已確認的資料
+- 支援離線執行 board／task CRUD 與拖拉更新狀態
+- 使用 durable pending-mutation Outbox、背景重試、版本衝突偵測與可見的同步狀態
 - 提供 LocalStorage-backed e2e mode，讓測試流程更穩定
 - 使用 TailwindCSS 建立響應式介面
 - 使用 Playwright 測試登入、board CRUD、task CRUD、拖拉流程
@@ -282,6 +338,8 @@ Demo：https://kanban-board-two-tan.vercel.app
 - dnd-kit
 - React Router v7
 - Supabase
+- Supabase Realtime
+- 透過 idb 使用 IndexedDB
 - 透過 Supabase Edge Function 串接 Gemini API
 - Sentry
 - Playwright
@@ -298,7 +356,9 @@ src/
   board/        Board 頁面、hooks、components、storage
   lib/          Supabase client、Sentry 設定、error reporting、資料庫型別
   login/        Auth hooks、登入頁、local auth storage
+  realtime/     Supabase Realtime 訂閱、連線狀態與恢復 hooks
   shared/       共用 UI components
+  sync/         IndexedDB replica、pending Outbox、背景同步引擎
   task/         Task hooks、components、storage
   utils/        可選的瀏覽器效能指標 helper
 e2e/            Playwright end-to-end tests
@@ -321,6 +381,7 @@ flowchart TB
     LoginRoute["/login<br/>LoginPage"]
     BoardRoute["/board<br/>ProtectedRoute"]
     NotFoundRoute["*<br/>NotFoundPage"]
+    SyncProvider["OfflineSyncProvider<br/>連線狀態 + 同步協調"]
   end
 
   subgraph FeatureLayer["功能模組層"]
@@ -334,11 +395,18 @@ flowchart TB
     AiBreakdown["ai/AiTaskBreakdownPanel<br/>確認與勾選建議"]
   end
 
-  subgraph DataLayer["資料層"]
+  subgraph SyncLayer["Local-first 同步層"]
+    RealtimeHook["realtime/useRealtimeTableRefresh<br/>postgres_changes 訂閱"]
+    LocalReplica["IndexedDB local replica<br/>boards + tasks + pendingMutations"]
+    SyncEngine["sync/supabaseSyncEngine<br/>依序 flush Outbox + version guards"]
+    Snapshot["權威 snapshot refresh<br/>訂閱 + 重連恢復"]
+  end
+
+  subgraph DataLayer["遠端與測試資料"]
     SupabaseClient["lib/supabase<br/>lazy Supabase client"]
     LocalMode["lib/localDataMode<br/>kanban-board:e2e"]
     LocalStorage["LocalStorage<br/>authStorage / boardStorage / taskStorage"]
-    Supabase["Supabase<br/>Auth + profiles + boards + tasks"]
+    Supabase["Supabase<br/>Auth + Postgres + Realtime"]
     EdgeFunction["Supabase Edge Function<br/>breakdown-task"]
     Gemini["Gemini API"]
   end
@@ -355,7 +423,7 @@ flowchart TB
   App --> BoardRoute
   App --> NotFoundRoute
   LoginRoute --> AuthHook
-  BoardRoute --> BoardPage
+  BoardRoute --> SyncProvider --> BoardPage
   BoardPage --> BoardComponents
   BoardPage --> TaskComponents
   BoardPage --> BoardHook
@@ -365,9 +433,20 @@ flowchart TB
   AiBreakdown --> EdgeFunction --> Gemini
   Dnd --> TaskHook
   AuthHook --> SupabaseClient
-  BoardHook --> SupabaseClient
-  TaskHook --> SupabaseClient
-  SupabaseClient --> Supabase
+  BoardHook --> LocalReplica
+  TaskHook --> LocalReplica
+  LocalReplica --> BoardHook
+  LocalReplica --> TaskHook
+  BoardHook --> SyncProvider
+  TaskHook --> SyncProvider
+  SyncProvider --> SyncEngine --> SupabaseClient --> Supabase
+  SyncEngine -->|確認寫入並移除 Outbox| LocalReplica
+  BoardHook --> RealtimeHook
+  TaskHook --> RealtimeHook
+  Supabase -->|postgres_changes| RealtimeHook
+  RealtimeHook -->|依 version 合併 event| LocalReplica
+  RealtimeHook --> Snapshot --> SupabaseClient
+  SyncProvider -->|離線 / 同步中 / 錯誤狀態| BoardPage
   AuthHook --> LocalMode
   BoardHook --> LocalMode
   TaskHook --> LocalMode
@@ -380,6 +459,27 @@ flowchart TB
   Main --> Sentry
 ```
 
+## 即時與離線同步
+
+Production 資料流以 Supabase 作為權威資料來源，IndexedDB 則作為 owner-scoped local replica。Realtime events 會加快已開啟視窗間的資料傳遞，而 snapshot refresh 會修補初始查詢到訂閱完成之間的空窗，並在重新連線後恢復權威資料狀態。
+
+### 遠端變更流程
+
+1. Supabase 透過 `postgres_changes` 發布 `boards` 或 `tasks` 的 `INSERT`、`UPDATE`、`DELETE` event。
+2. 對應的功能 hook 會略過仍有本機 pending mutation 的 entity，以 version-aware merge 套用較新的 payload，並將結果寫入 IndexedDB。
+3. Channel 進入 `SUBSCRIBED` 後，hook 會重新取得 authoritative snapshot，修補建立訂閱期間可能漏掉的 events。
+4. Snapshot replacement 會保留尚未同步的本機 mutations，再由 hook 渲染合併後的 board 或 task 狀態。
+
+### 本機變更流程
+
+1. Board 或 task 操作會立即更新 UI。
+2. Entity 變更及其 pending mutation 會一起寫入 IndexedDB，完成後再請求背景同步。
+3. `OfflineSyncProvider` 讀取 Outbox，並由 `supabaseSyncEngine` 依照相依安全的順序處理 board upsert、task upsert、task delete 與 board delete。
+4. Update 與 delete 使用 mutation 的 `baseVersion` 作為 optimistic concurrency guard。遠端確認成功後會更新 local replica，並移除已 acknowledge 的 Outbox entry。
+5. Transient failure 會以 exponential backoff 自動重試；版本衝突則保留為 blocked mutation，避免無聲捨棄本機變更。
+
+Board 畫面會顯示離線、同步中、blocked 與失敗狀態。同步失敗時可以手動重試；只要還有 pending changes，登出功能就會維持停用。AI 拆任務仍依賴網路，離線時會停用。
+
 ## 技術取捨
 
 | 選擇                                     | 核心優勢（原因）                                                                                                   | 潛在代價與風險                                                                                                                                                      |
@@ -391,6 +491,8 @@ flowchart TB
 | **樂觀更新 (Optimistic UI Updates)**     | 顯著提升使用者體驗。CRUD 與看板拖拉移動等操作能獲得即時的畫面回饋，消除網路延遲的卡頓感。                          | 增加了前端狀態管理的複雜度，當後端寫入失敗時，需要額外設計嚴密的狀態回滾（Rollback）機制與流暢的錯誤提示。                                                          |
 | **LocalStorage E2E Mode (Playwright)**   | 讓測試環境去中心化。E2E 測試不需依賴真實的 Supabase Session 或遠端資料庫狀態，大幅提升測試的穩定度與執行速度。     | 測試環境使用的 Mock 資料夾行為與 Production 環境的 Supabase 真實行為無法完全一致，可能漏掉部分極端邊界情況（Edge Cases）。                                          |
 | **Sentry 監控機制**                      | 建立 Production 環境的錯誤追蹤（Observability），結合 Source Maps 將壓縮代碼還原，實現精準的線上錯誤定位與 Debug。 | 需額外設定 DSN、處理 CI/CD 流程中的 Source Map 自動上傳與環境變數管理，會增加建置流程的複雜度。                                                                     |
+| **IndexedDB Local Replica + Durable Outbox** | 讓已確認資料可在本機使用，board／task 變更也能跨越離線期間或暫時網路失敗，直到背景同步成功。 | 需要明確管理 cache ownership、mutation 執行順序、重試策略與衝突狀態；IndexedDB schema 變更也必須審慎處理相容性。 |
+| **Realtime 通知 + Snapshot Recovery**    | Realtime events 能快速把變更傳遞到已開啟的視窗，authoritative snapshots 則修補訂閱建立或重連期間漏掉的 events。 | 需要設定 Supabase Realtime publication，也會增加 snapshot requests；event 傳遞時間與重複事件不能視為權威順序，仍須以 version-aware 規則過濾。 |
 
 ## 可觀測性
 
@@ -445,6 +547,8 @@ SENTRY_PROJECT=your_sentry_project_slug
 - `profiles`
 - `boards`
 - `tasks`
+
+`boards` 與 `tasks` 都必須具有數字型別的 `version` 欄位，供 optimistic concurrency check 使用；也必須將這兩個 tables 加入 Supabase Realtime publication，client 才能收到 `postgres_changes` events。
 
 產生出的資料庫型別放在 `src/lib/database.types.ts`。
 
