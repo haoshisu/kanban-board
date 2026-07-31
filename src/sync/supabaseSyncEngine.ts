@@ -224,7 +224,7 @@ const deleteBoard = async (mutation: PendingMutation) => {
  // 已被其他裝置刪除，視為刪除成功，保持 outbox idempotent
  if (!remoteBoard) return
  // Board 還存在，表示 version 不同
- throw conflict("xxx", mutation, remoteBoard)
+ throw conflict("Board 已被修改，無法使用舊版本刪除", mutation, remoteBoard)
 }
 
 const syncOneMutation = async (mutation: PendingMutation) => {
