@@ -13,6 +13,8 @@ Demo account: `you@example.com` / `123`
 - Email/password login with Supabase Auth
 - Protected board route with React Router v7
 - Board CRUD: create, edit, delete, and select boards
+- Board sharing: owners invite collaborators by email as editors, who can view and manage tasks on the shared board but not its settings
+- Presence avatars showing who else currently has the board open
 - Task CRUD: create, edit, delete, and move tasks between statuses
 - AI task breakdown with selectable task suggestions before bulk creation
 - Drag-and-drop task status updates with dnd-kit
@@ -92,6 +94,8 @@ flowchart TB
     BoardComponents["board/components"]
     TaskComponents["task/components"]
     AiBreakdown["ai/AiTaskBreakdownPanel<br/>review + select suggestions"]
+    SharingPanel["board/BoardSharingPanel<br/>invite/remove editors"]
+    Presence["realtime/useBoardPresence<br/>who has this board open"]
   end
 
   subgraph SyncLayer["Local-first sync layer"]
@@ -129,8 +133,12 @@ flowchart TB
   BoardPage --> TaskHook
   BoardPage --> Dnd
   BoardPage --> AiBreakdown
+  BoardPage --> SharingPanel
+  BoardPage --> Presence
   AiBreakdown --> EdgeFunction --> Gemini
   Dnd --> TaskHook
+  SharingPanel -->|invite_board_member RPC + board_members table| SupabaseClient
+  Presence -->|Realtime Presence channel, no DB table| SupabaseClient
   AuthHook --> SupabaseClient
   BoardHook --> LocalReplica
   TaskHook --> LocalReplica
@@ -142,7 +150,7 @@ flowchart TB
   SyncEngine -->|acknowledge confirmed writes| LocalReplica
   BoardHook --> RealtimeHook
   TaskHook --> RealtimeHook
-  Supabase -->|postgres_changes| RealtimeHook
+  Supabase -->|postgres_changes, RLS-scoped to owner + board_members| RealtimeHook
   RealtimeHook -->|version-aware event merge| LocalReplica
   RealtimeHook --> Snapshot --> SupabaseClient
   SyncProvider -->|offline / syncing / error status| BoardPage
@@ -160,7 +168,7 @@ flowchart TB
 
 ## Realtime and Offline Sync
 
-The production data path uses Supabase as the authoritative store and IndexedDB as an owner-scoped local replica. Realtime events speed up propagation between active windows, while snapshot refreshes repair the gap between an initial query and subscription readiness and recover authoritative state after reconnecting.
+The production data path uses Supabase as the authoritative store and IndexedDB as a viewer-scoped local replica (partitioned by the current user, which may be a board's owner or one of its invited editors). Realtime events speed up propagation between active windows, while snapshot refreshes repair the gap between an initial query and subscription readiness and recover authoritative state after reconnecting.
 
 ### Remote change flow
 
@@ -246,8 +254,11 @@ The app expects these Supabase tables:
 - `profiles`
 - `boards`
 - `tasks`
+- `board_members`
 
 Both `boards` and `tasks` require a numeric `version` column for optimistic concurrency checks. Enable both tables in the Supabase Realtime publication so the client can receive `postgres_changes` events.
+
+`board_members` maps `board_id`/`user_id` pairs to a role (currently only `editor`) and is populated through the `invite_board_member` RPC rather than direct inserts. RLS grants `boards` (select only) and `tasks` (select/insert/update/delete) access to both the board owner and any of its members, while board settings (rename, delete, invite, remove members) stay owner-only.
 
 The generated type definitions are stored in `src/lib/database.types.ts`.
 
@@ -314,6 +325,8 @@ Demo：https://kanban-board-two-tan.vercel.app
 - 使用 Supabase Auth 實作 email/password 登入
 - 使用 React Router v7 實作受保護的 board 頁面
 - Board CRUD：建立、編輯、刪除、切換 board
+- Board 共享：owner 可以用 email 邀請協作者成為 editor，editor 能查看並管理共享 board 上的 tasks，但不能更動 board 設定
+- Presence 頭像，顯示目前還有誰打開這個 board
 - Task CRUD：建立、編輯、刪除、移動 task 狀態
 - 使用 AI 拆解需求，確認並勾選建議項目後批次建立 tasks
 - 使用 dnd-kit 實作拖拉更新 task 狀態
@@ -393,6 +406,8 @@ flowchart TB
     BoardComponents["board/components"]
     TaskComponents["task/components"]
     AiBreakdown["ai/AiTaskBreakdownPanel<br/>確認與勾選建議"]
+    SharingPanel["board/BoardSharingPanel<br/>邀請／移除 editor"]
+    Presence["realtime/useBoardPresence<br/>目前有誰打開這個 board"]
   end
 
   subgraph SyncLayer["Local-first 同步層"]
@@ -430,8 +445,12 @@ flowchart TB
   BoardPage --> TaskHook
   BoardPage --> Dnd
   BoardPage --> AiBreakdown
+  BoardPage --> SharingPanel
+  BoardPage --> Presence
   AiBreakdown --> EdgeFunction --> Gemini
   Dnd --> TaskHook
+  SharingPanel -->|invite_board_member RPC + board_members table| SupabaseClient
+  Presence -->|Realtime Presence channel，無資料庫 table| SupabaseClient
   AuthHook --> SupabaseClient
   BoardHook --> LocalReplica
   TaskHook --> LocalReplica
@@ -443,7 +462,7 @@ flowchart TB
   SyncEngine -->|確認寫入並移除 Outbox| LocalReplica
   BoardHook --> RealtimeHook
   TaskHook --> RealtimeHook
-  Supabase -->|postgres_changes| RealtimeHook
+  Supabase -->|postgres_changes，RLS 依 owner + board_members 過濾| RealtimeHook
   RealtimeHook -->|依 version 合併 event| LocalReplica
   RealtimeHook --> Snapshot --> SupabaseClient
   SyncProvider -->|離線 / 同步中 / 錯誤狀態| BoardPage
@@ -461,7 +480,7 @@ flowchart TB
 
 ## 即時與離線同步
 
-Production 資料流以 Supabase 作為權威資料來源，IndexedDB 則作為 owner-scoped local replica。Realtime events 會加快已開啟視窗間的資料傳遞，而 snapshot refresh 會修補初始查詢到訂閱完成之間的空窗，並在重新連線後恢復權威資料狀態。
+Production 資料流以 Supabase 作為權威資料來源，IndexedDB 則作為以目前使用者（可能是 board 的 owner，也可能是被邀請的 editor）為分區的 local replica。Realtime events 會加快已開啟視窗間的資料傳遞，而 snapshot refresh 會修補初始查詢到訂閱完成之間的空窗，並在重新連線後恢復權威資料狀態。
 
 ### 遠端變更流程
 
@@ -547,8 +566,11 @@ SENTRY_PROJECT=your_sentry_project_slug
 - `profiles`
 - `boards`
 - `tasks`
+- `board_members`
 
 `boards` 與 `tasks` 都必須具有數字型別的 `version` 欄位，供 optimistic concurrency check 使用；也必須將這兩個 tables 加入 Supabase Realtime publication，client 才能收到 `postgres_changes` events。
+
+`board_members` 記錄 `board_id`/`user_id` 與角色（目前只有 `editor`）的對應，只能透過 `invite_board_member` 這個 RPC 新增，不能直接 insert。RLS 讓 board owner 和任何成員都能存取 `boards`（僅 select）與 `tasks`（select/insert/update/delete），但 board 設定（改名、刪除、邀請／移除成員）仍然只有 owner 能做。
 
 產生出的資料庫型別放在 `src/lib/database.types.ts`。
 
