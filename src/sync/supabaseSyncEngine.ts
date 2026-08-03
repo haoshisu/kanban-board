@@ -115,7 +115,6 @@ const updateBoard = async (mutation: PendingMutation, board: Board): Promise<Boa
    updated_at: board.updatedAt,
   })
   .eq("id", board.id)
-  .eq("owner_id", mutation.ownerId)
   .eq("version", mutation.baseVersion)
   .select(BOARD_COLUMNS)
   .maybeSingle()
@@ -211,7 +210,6 @@ const deleteBoard = async (mutation: PendingMutation) => {
   .from("boards")
   .delete()
   .eq("id", mutation.entityId)
-  .eq("owner_id", mutation.ownerId)
   .eq("version", mutation.baseVersion)
   .select(BOARD_COLUMNS)
   .maybeSingle()

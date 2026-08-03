@@ -17,9 +17,5 @@ export const persistBoardRealtimePayload = async (
   return;
  }
 
- if (payload.new.owner_id !== ownerId) {
-  return;
- }
-
  await upsertCachedBoard(ownerId, mapBoardRow(payload.new));
 };

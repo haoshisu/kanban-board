@@ -280,7 +280,7 @@ export default function BoardPage({ userEmail, userId, userName, onLogout }: Boa
          boards.map((board) => (
           <BoardCard
            board={board}
-           isReadOnly={false}
+           isReadOnly={board.ownerId !== undefined && board.ownerId !== userId}
            isSelected={selectedBoard?.id === board.id}
            key={board.id}
            onDelete={handleDeleteBoard}

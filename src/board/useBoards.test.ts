@@ -279,6 +279,7 @@ describe("useBoards local mode", () => {
 
   const expectedBoard = {
    id: "board-new",
+   ownerId: "owner-1",
    name: "新 board",
    description: "新描述",
    statuses: defaultBoardStatuses,

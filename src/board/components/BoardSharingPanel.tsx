@@ -8,7 +8,7 @@ import {
  primaryButtonClassName,
  secondaryButtonClassName,
 } from "../../shared/formStyles"
-import { inviteBoardMember, listBoardMembers, removeBoardMember } from "../boardMembers"
+import { getInviteErrorMessage, inviteBoardMember, listBoardMembers, removeBoardMember } from "../boardMembers"
 import type { BoardMember } from "../boardMembers"
 
 type BoardSharingPanelProps = {
@@ -24,6 +24,7 @@ export function BoardSharingPanel({ boardId, onClose }: BoardSharingPanelProps) 
  const [email, setEmail] = useState("")
  const [inviteError, setInviteError] = useState("")
  const [isInviting, setIsInviting] = useState(false)
+ const [removeError, setRemoveError] = useState("")
 
  const refreshMembers = async () => {
   setIsLoading(true)
@@ -60,16 +61,22 @@ export function BoardSharingPanel({ boardId, onClose }: BoardSharingPanelProps) 
    await inviteBoardMember(boardId, email.trim())
    setEmail("")
    await refreshMembers()
-  } catch {
-   setInviteError("邀請失敗，請確認對方已經註冊帳號")
+  } catch (error) {
+   setInviteError(getInviteErrorMessage(error))
   } finally {
    setIsInviting(false)
   }
  }
 
  const handleRemove = async (userId: string) => {
-  await removeBoardMember(boardId, userId)
-  await refreshMembers()
+  setRemoveError("")
+
+  try {
+   await removeBoardMember(boardId, userId)
+   await refreshMembers()
+  } catch {
+   setRemoveError("移除失敗，請稍後再試")
+  }
  }
 
  return (
@@ -80,28 +87,31 @@ export function BoardSharingPanel({ boardId, onClose }: BoardSharingPanelProps) 
     ) : loadError ? (
      <p className={formErrorClassName}>{loadError}</p>
     ) : (
-     <ul className="space-y-2">
-      {members.map((member) => (
-       <li
-        className="flex items-center justify-between gap-3 rounded-[5px] border border-ink-muted/30 px-3 py-2"
-        key={member.userId}
-       >
-        <div>
-         <p className="text-sm font-medium text-ink">{member.displayName ?? member.userId}</p>
-         <p className="text-xs text-ink-muted">{member.role}</p>
-        </div>
-        {member.role === "editor" ? (
-         <button
-          className="text-xs font-medium text-error hover:cursor-pointer hover:underline"
-          onClick={() => void handleRemove(member.userId)}
-          type="button"
-         >
-          移除
-         </button>
-        ) : null}
-       </li>
-      ))}
-     </ul>
+     <>
+      {removeError ? <p className={formErrorClassName}>{removeError}</p> : null}
+      <ul className="space-y-2">
+       {members.map((member) => (
+        <li
+         className="flex items-center justify-between gap-3 rounded-[5px] border border-ink-muted/30 px-3 py-2"
+         key={member.userId}
+        >
+         <div>
+          <p className="text-sm font-medium text-ink">{member.displayName ?? member.userId}</p>
+          <p className="text-xs text-ink-muted">{member.role}</p>
+         </div>
+         {member.role === "editor" ? (
+          <button
+           className="text-xs font-medium text-error hover:cursor-pointer hover:underline"
+           onClick={() => void handleRemove(member.userId)}
+           type="button"
+          >
+           移除
+          </button>
+         ) : null}
+        </li>
+       ))}
+      </ul>
+     </>
     )}
 
     <form className="space-y-2 border-t border-ink-muted/30 pt-4" onSubmit={handleInvite}>

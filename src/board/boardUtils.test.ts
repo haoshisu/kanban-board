@@ -29,6 +29,7 @@ describe('boardUtils', () => {
   it('maps a board row into a board', () => {
     expect(mapBoardRow(boardRow)).toEqual({
       id: boardRow.id,
+      ownerId: boardRow.owner_id,
       name: boardRow.name,
       description: boardRow.description,
       statuses: defaultBoardStatuses,

@@ -120,6 +120,7 @@ describe("persistBoardRealtimePayload", () => {
 
   expect(upsertCachedBoardMock).toHaveBeenCalledWith("owner-1", {
    id: "board-1",
+   ownerId: "owner-1",
    name: "Board",
    description: "",
    statuses: defaultBoardStatuses,
@@ -144,5 +145,30 @@ describe("persistBoardRealtimePayload", () => {
 
  expect(deleteCachedBoardMock).toHaveBeenCalledWith("owner-1", "board-1");
   expect(deleteCachedTasksByBoardMock).not.toHaveBeenCalled();
+ });
+
+ it("upserts an updated board for a non-owner editor viewing a shared board", async () => {
+  const payload: RealtimePostgresUpdatePayload<BoardRow> = {
+   schema: "public",
+   table: "boards",
+   commit_timestamp: "2026-01-02T00:00:00.000Z",
+   errors: [],
+   eventType: "UPDATE",
+   new: boardRow,
+   old: { id: boardRow.id, version: 1 },
+  };
+
+  await persistBoardRealtimePayload("editor-1", payload);
+
+  expect(upsertCachedBoardMock).toHaveBeenCalledWith("editor-1", {
+   id: "board-1",
+   ownerId: "owner-1",
+   name: "Board",
+   description: "",
+   statuses: defaultBoardStatuses,
+   version: 2,
+   createdAt: "2026-01-01T00:00:00.000Z",
+   updatedAt: "2026-01-02T00:00:00.000Z",
+  });
  });
 });
