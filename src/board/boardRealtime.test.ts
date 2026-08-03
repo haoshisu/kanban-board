@@ -11,6 +11,7 @@ import type { Board } from './types'
 
 const createBoard = (overrides: Partial<Board> = {}): Board => ({
   id: 'board-1',
+  ownerId: 'owner-1',
   name: 'Board',
   description: '',
   statuses: defaultBoardStatuses,
@@ -69,7 +70,7 @@ describe('upsertBoardByVersion', () => {
 })
 
 describe('applyBoardRealtimePayload', () => {
-  it('maps and applies an updated board from the current owner', () => {
+  it('maps and applies an updated board', () => {
     const payload: RealtimePostgresUpdatePayload<BoardRow> = {
       ...payloadBase,
       eventType: 'UPDATE',
@@ -77,12 +78,12 @@ describe('applyBoardRealtimePayload', () => {
       old: { id: 'board-1', version: 1 },
     }
 
-    expect(applyBoardRealtimePayload([createBoard()], 'owner-1', payload)).toEqual([
+    expect(applyBoardRealtimePayload([createBoard()], payload)).toEqual([
       createBoard({ name: 'Remote board', version: 2 }),
     ])
   })
 
-  it('ignores inserted boards from another owner', () => {
+  it('applies an inserted board regardless of its owner, since RLS already scopes visibility', () => {
     const currentBoards = [createBoard()]
     const payload: RealtimePostgresInsertPayload<BoardRow> = {
       ...payloadBase,
@@ -91,9 +92,10 @@ describe('applyBoardRealtimePayload', () => {
       old: {},
     }
 
-    expect(applyBoardRealtimePayload(currentBoards, 'owner-1', payload)).toBe(
-      currentBoards,
-    )
+    expect(applyBoardRealtimePayload(currentBoards, payload)).toEqual([
+      createBoard({ id: 'board-2', ownerId: 'owner-2' }),
+      createBoard(),
+    ])
   })
 
   it('removes a deleted board by id', () => {
@@ -106,11 +108,7 @@ describe('applyBoardRealtimePayload', () => {
     }
 
     expect(
-      applyBoardRealtimePayload(
-        [createBoard(), remainingBoard],
-        'owner-1',
-        payload,
-      ),
+      applyBoardRealtimePayload([createBoard(), remainingBoard], payload),
     ).toEqual([remainingBoard])
   })
 })

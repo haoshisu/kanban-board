@@ -145,6 +145,7 @@ describe("BoardPage integration", () => {
   expect(readStoredBoards()).toEqual([
    {
     id: createdBoardId,
+    ownerId: "local-you@example.com",
     name: "產品開發",
     description: "Roadmap",
     statuses: [...statuses],

@@ -8,6 +8,42 @@ export type Database = {
  };
  public: {
   Tables: {
+   board_members: {
+    Row: {
+     board_id: string;
+     created_at: string;
+     role: string;
+     user_id: string;
+    };
+    Insert: {
+     board_id: string;
+     created_at?: string;
+     role?: string;
+     user_id: string;
+    };
+    Update: {
+     board_id?: string;
+     created_at?: string;
+     role?: string;
+     user_id?: string;
+    };
+    Relationships: [
+     {
+      foreignKeyName: "board_members_board_id_fkey";
+      columns: ["board_id"];
+      isOneToOne: false;
+      referencedRelation: "boards";
+      referencedColumns: ["id"];
+     },
+     {
+      foreignKeyName: "board_members_user_id_fkey";
+      columns: ["user_id"];
+      isOneToOne: false;
+      referencedRelation: "profiles";
+      referencedColumns: ["id"];
+     },
+    ];
+   };
    boards: {
     Row: {
      created_at: string;
@@ -116,7 +152,14 @@ export type Database = {
    [_ in never]: never;
   };
   Functions: {
-   [_ in never]: never;
+   invite_board_member: {
+    Args: {
+     p_board_id: string;
+     p_email: string;
+     p_role?: string;
+    };
+    Returns: undefined;
+   };
   };
   Enums: {
    [_ in never]: never;
