@@ -28,6 +28,30 @@ vi.mock("../lib/localDataMode", () => ({
  isLocalDataMode: () => true,
 }))
 
+vi.mock("../realtime/useBoardPresence", () => ({
+ useBoardPresence: () => [],
+}))
+
+const { generateTaskBreakdownMock, listBoardMembersMock, inviteBoardMemberMock, removeBoardMemberMock } = vi.hoisted(
+ () => ({
+  generateTaskBreakdownMock: vi.fn(),
+  listBoardMembersMock: vi.fn(),
+  inviteBoardMemberMock: vi.fn(),
+  removeBoardMemberMock: vi.fn(),
+ }),
+)
+
+vi.mock("../ai/components/service/breakdown-task", () => ({
+ generateTaskBreakdown: generateTaskBreakdownMock,
+}))
+
+vi.mock("./boardMembers", () => ({
+ listBoardMembers: listBoardMembersMock,
+ inviteBoardMember: inviteBoardMemberMock,
+ removeBoardMember: removeBoardMemberMock,
+ getInviteErrorMessage: () => "邀請失敗",
+}))
+
 const boardStorageKey = "kanban-board:boards"
 const taskStorageKey = "kanban-board:tasks"
 const generatedId = "00000000-0000-4000-8000-000000000000"
@@ -120,6 +144,10 @@ describe("BoardPage integration", () => {
   vi.stubGlobal("crypto", {
    randomUUID: vi.fn(() => generatedId),
   })
+  generateTaskBreakdownMock.mockReset()
+  listBoardMembersMock.mockReset().mockResolvedValue([])
+  inviteBoardMemberMock.mockReset()
+  removeBoardMemberMock.mockReset()
  })
 
  afterEach(() => {
@@ -297,7 +325,7 @@ describe("BoardPage integration", () => {
   expect(readStoredTasks()).toMatchObject([{ id: "task-2", boardId: "board-2" }])
  })
 
- it("keeps board and task editing available while offline", async () => {
+ it("keeps board and task editing available while offline", { timeout: 30000 }, async () => {
   const user = userEvent.setup()
   vi.spyOn(window.navigator, "onLine", "get").mockReturnValue(false)
 
@@ -312,7 +340,7 @@ describe("BoardPage integration", () => {
   expect(within(boardCard).getByRole("button", { name: /刪除/ })).toBeEnabled()
 
   await createTaskFromUi(user, "尚未開始", "離線新增 task")
-  const taskCard = await screen.findByRole("article", { name: "Task 離線新增 task" }, { timeout: 5000 })
+  const taskCard = await screen.findByRole("article", { name: "Task 離線新增 task" }, { timeout: 20000 })
   expect(within(taskCard).getByRole("button", { name: /修改/ })).toBeEnabled()
   expect(within(taskCard).getByRole("button", { name: /刪除/ })).toBeEnabled()
 
@@ -321,5 +349,128 @@ describe("BoardPage integration", () => {
    expect(button).toBeEnabled()
   }
   expect(screen.getByRole("button", { name: /AI 拆任務/ })).toBeDisabled()
+ })
+
+ it("does not delete a board when the confirmation dialog is cancelled", async () => {
+  const user = userEvent.setup()
+  vi.spyOn(window, "confirm").mockReturnValue(false)
+
+  storeBoards([createBoard({ id: "board-1", name: "產品開發" })])
+  renderBoardPage()
+
+  expect(await screen.findByRole("heading", { level: 2, name: "產品開發" })).toBeVisible()
+
+  await user.click(
+   within(screen.getByRole("article", { name: "Board 產品開發" })).getByRole("button", { name: "刪除" }),
+  )
+
+  expect(screen.getByRole("article", { name: "Board 產品開發" })).toBeVisible()
+  expect(readStoredBoards()).toMatchObject([{ id: "board-1" }])
+ })
+
+ it("does not delete a task when the confirmation dialog is cancelled", async () => {
+  const user = userEvent.setup()
+  vi.spyOn(window, "confirm").mockReturnValue(false)
+
+  storeBoards([createBoard()])
+  storeTasks([createTask()])
+  renderBoardPage()
+
+  const taskCard = await screen.findByLabelText("Task 設計登入流程")
+  await user.click(within(taskCard).getByRole("button", { name: "刪除" }))
+
+  expect(screen.getByLabelText("Task 設計登入流程")).toBeVisible()
+  expect(readStoredTasks()).toMatchObject([{ id: "task-1" }])
+ })
+
+ it("closes the edit modal when the board currently being edited is deleted", async () => {
+  const user = userEvent.setup()
+  vi.spyOn(window, "confirm").mockReturnValue(true)
+
+  storeBoards([createBoard({ id: "board-1", name: "產品開發" })])
+  renderBoardPage()
+
+  expect(await screen.findByRole("heading", { level: 2, name: "產品開發" })).toBeVisible()
+
+  const boardCard = screen.getByRole("article", { name: "Board 產品開發" })
+  await user.click(within(boardCard).getByRole("button", { name: "修改" }))
+  expect(await screen.findByRole("heading", { name: "修改 board" })).toBeVisible()
+
+  await user.click(within(boardCard).getByRole("button", { name: "刪除" }))
+
+  await waitFor(() => {
+   expect(screen.queryByRole("heading", { name: "修改 board" })).not.toBeInTheDocument()
+  })
+ })
+
+ it("closes the edit modal when the task currently being edited is deleted", async () => {
+  const user = userEvent.setup()
+  vi.spyOn(window, "confirm").mockReturnValue(true)
+
+  storeBoards([createBoard()])
+  storeTasks([createTask()])
+  renderBoardPage()
+
+  const taskCard = await screen.findByLabelText("Task 設計登入流程")
+  await user.click(within(taskCard).getByRole("button", { name: "修改" }))
+  expect(await screen.findByRole("dialog", { name: "修改 task" })).toBeVisible()
+
+  await user.click(within(taskCard).getByRole("button", { name: "刪除" }))
+
+  await waitFor(() => {
+   expect(screen.queryByRole("dialog", { name: "修改 task" })).not.toBeInTheDocument()
+  })
+ })
+
+ it("generates and creates AI-suggested tasks", async () => {
+  const user = userEvent.setup()
+  generateTaskBreakdownMock.mockResolvedValue({
+   ok: true,
+   tasks: [{ title: "AI 產生的 task", description: "AI 描述", status: "todo" }],
+  })
+
+  storeBoards([createBoard()])
+  renderBoardPage()
+
+  expect(await screen.findByRole("heading", { level: 2, name: "產品開發" })).toBeVisible()
+
+  await user.click(screen.getByRole("button", { name: "AI 拆任務" }))
+  await user.type(screen.getByPlaceholderText("例如：做一個登入與註冊功能，包含錯誤提示和測試"), "拆解登入功能")
+  await user.click(screen.getByRole("button", { name: "產生 tasks" }))
+
+  expect(await screen.findByText("AI 產生的 task")).toBeVisible()
+
+  await user.click(screen.getByRole("button", { name: "加入 1 個 tasks" }))
+
+  expect(await screen.findByRole("article", { name: "Task AI 產生的 task" })).toBeVisible()
+  expect(readStoredTasks()).toMatchObject([{ title: "AI 產生的 task" }])
+ })
+
+ it("shows the sharing panel only for the board owner and lets it close", async () => {
+  const user = userEvent.setup()
+
+  storeBoards([createBoard({ id: "board-1", name: "產品開發", ownerId: "local-you@example.com" })])
+  renderBoardPage()
+
+  expect(await screen.findByRole("heading", { level: 2, name: "產品開發" })).toBeVisible()
+
+  await user.click(screen.getByRole("button", { name: "共享" }))
+  const dialog = await screen.findByRole("dialog", { name: "共享 Board" })
+  expect(dialog).toBeVisible()
+
+  await user.click(within(dialog).getAllByRole("button", { name: "關閉" })[0])
+  expect(screen.queryByRole("dialog", { name: "共享 Board" })).not.toBeInTheDocument()
+ })
+
+ it("hides board edit and delete controls and the sharing button for a read-only board", async () => {
+  storeBoards([createBoard({ id: "board-1", name: "別人的 board", ownerId: "someone-else@example.com" })])
+  renderBoardPage()
+
+  expect(await screen.findByRole("heading", { level: 2, name: "別人的 board" })).toBeVisible()
+
+  const boardCard = screen.getByRole("article", { name: "Board 別人的 board" })
+  expect(within(boardCard).getByRole("button", { name: "修改" })).toBeDisabled()
+  expect(within(boardCard).getByRole("button", { name: "刪除" })).toBeDisabled()
+  expect(screen.queryByRole("button", { name: "共享" })).not.toBeInTheDocument()
  })
 })

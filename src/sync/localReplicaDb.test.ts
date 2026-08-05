@@ -1,9 +1,9 @@
 import "fake-indexeddb/auto"
-import { deleteDB } from "idb"
+import { deleteDB, openDB } from "idb"
 import { beforeEach, describe, expect, it } from "vitest"
 import type { Board } from "../board/types"
 import type { Task } from "../task/types"
-import { closeLocalReplicaDb, LOCAL_REPLICA_DB_NAME } from "./localReplicaDb"
+import { closeLocalReplicaDb, getLocalReplicaDb, LOCAL_REPLICA_DB_NAME } from "./localReplicaDb"
 import { deleteCachedBoard, readCachedBoards, replaceCachedBoards, upsertCachedBoard } from "./boardCacheRepository"
 import {
  deleteCachedTask,
@@ -55,6 +55,67 @@ const createTask = (overrides: Partial<Task> = {}): Task => ({
 beforeEach(async () => {
  await closeLocalReplicaDb()
  await deleteDB(LOCAL_REPLICA_DB_NAME)
+})
+
+describe("getLocalReplicaDb", () => {
+ it("creates all object stores and indexes on a fresh database", async () => {
+  const db = await getLocalReplicaDb()
+
+  expect(db.objectStoreNames.contains("boards")).toBe(true)
+  expect(db.objectStoreNames.contains("tasks")).toBe(true)
+  expect(db.objectStoreNames.contains("syncMetadata")).toBe(true)
+  expect(db.objectStoreNames.contains("pendingMutations")).toBe(true)
+
+  const boardTx = db.transaction("boards")
+  expect(boardTx.store.indexNames.contains("by-owner")).toBe(true)
+
+  const taskTx = db.transaction("tasks")
+  expect(taskTx.store.indexNames.contains("by-owner")).toBe(true)
+  expect(taskTx.store.indexNames.contains("by-owner-board")).toBe(true)
+
+  const metadataTx = db.transaction("syncMetadata")
+  expect(metadataTx.store.indexNames.contains("by-owner")).toBe(true)
+
+  const mutationTx = db.transaction("pendingMutations")
+  expect(mutationTx.store.indexNames.contains("by-owner")).toBe(true)
+  expect(mutationTx.store.indexNames.contains("by-owner-board")).toBe(true)
+ })
+
+ it("caches the same database instance across repeated calls", async () => {
+  const first = await getLocalReplicaDb()
+  const second = await getLocalReplicaDb()
+
+  expect(first).toBe(second)
+ })
+
+ it("returns a new database instance after closing", async () => {
+  const first = await getLocalReplicaDb()
+
+  await closeLocalReplicaDb()
+  const second = await getLocalReplicaDb()
+
+  expect(second).not.toBe(first)
+ })
+
+ it("is a no-op to close a database that was never opened", async () => {
+  await expect(closeLocalReplicaDb()).resolves.toBeUndefined()
+ })
+
+ it("only creates missing object stores when upgrading from an older version", async () => {
+  const v1 = await openDB(LOCAL_REPLICA_DB_NAME, 1, {
+   upgrade(database) {
+    database.createObjectStore("boards", { keyPath: ["ownerId", "boardId"] })
+   },
+  })
+  v1.close()
+
+  const upgraded = await getLocalReplicaDb()
+
+  expect(upgraded.objectStoreNames.contains("boards")).toBe(true)
+  expect(upgraded.objectStoreNames.contains("tasks")).toBe(true)
+  expect(upgraded.objectStoreNames.contains("syncMetadata")).toBe(true)
+  expect(upgraded.objectStoreNames.contains("pendingMutations")).toBe(true)
+ })
 })
 
 describe("board cache repository", () => {
