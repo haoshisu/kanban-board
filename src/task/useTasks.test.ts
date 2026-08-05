@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import type { Task } from "./types"
 import { useTasks } from "./useTasks"
 import type { TaskRow } from "./taskUtils"
+import type { PendingMutation } from "../sync/localReplicaTypes"
 
 const {
  captureAppErrorMock,
@@ -22,6 +23,10 @@ const {
  enqueueLocalReplicaWriteMock,
  persistTaskRealtimePayloadMock,
  realtimeTableRefreshMock,
+ useOfflineSyncMock,
+ stageTaskUpsertMock,
+ stageTaskDeleteMock,
+ requestSyncMock,
 } = vi.hoisted(() => ({
  captureAppErrorMock: vi.fn(),
  getSupabaseMock: vi.fn(),
@@ -39,6 +44,10 @@ const {
   void options
   return "connected"
  }),
+ useOfflineSyncMock: vi.fn(),
+ stageTaskUpsertMock: vi.fn(),
+ stageTaskDeleteMock: vi.fn(),
+ requestSyncMock: vi.fn(),
 }))
 
 vi.mock("../lib/errorReporting", () => ({
@@ -78,6 +87,15 @@ vi.mock("../realtime/useRealtimeTableRefresh", () => ({
  useRealtimeTableRefresh: realtimeTableRefreshMock,
 }))
 
+vi.mock("../sync/offlineSyncContext", () => ({
+ useOfflineSync: useOfflineSyncMock,
+}))
+
+vi.mock("../sync/pendingMutationRepository", () => ({
+ stageTaskUpsert: stageTaskUpsertMock,
+ stageTaskDelete: stageTaskDeleteMock,
+}))
+
 const fixedNow = "2026-06-05T12:00:00.000Z"
 
 const createTaskFixture = (overrides: Partial<Task> = {}): Task => ({
@@ -112,108 +130,9 @@ const flushLocalEffect = async () => {
  })
 }
 
-const createDeferred = <Value,>() => {
- let resolve!: (value: Value) => void
-
- const promise = new Promise<Value>((nextResolve) => {
-  resolve = nextResolve
- })
-
- return { promise, resolve }
-}
-
 type TaskLoadResult = {
  data: TaskRow[]
  error: { message: string } | null
-}
-
-const createTaskSupabaseMock = ({
- loadResult = { data: [], error: null },
- loadPromise,
- insertResult = { data: null, error: null },
- insertThrows = null,
- updateResult = { data: null, error: null },
- updateThrows = null,
- deleteResult = { data: { id: "task-1" }, error: null },
- deleteThrows = null,
- deleteByBoardResult = { error: null },
- deleteByBoardThrows = null,
-}: {
- loadResult?: TaskLoadResult
- loadPromise?: Promise<TaskLoadResult>
- insertResult?: { data: TaskRow | null; error: { message: string } | null }
- insertThrows?: Error | null
- updateResult?: { data: TaskRow | null; error: { message: string } | null }
- updateThrows?: Error | null
- deleteResult?: {
-  data?: { id: string } | null
-  error: { message: string } | null
- }
- deleteThrows?: Error | null
- deleteByBoardResult?: { error: { message: string } | null }
- deleteByBoardThrows?: Error | null
-}) => {
- const secondOrderMock = vi.fn(() => loadPromise ?? Promise.resolve(loadResult))
- const firstOrderMock = vi.fn(() => ({ order: secondOrderMock }))
- const loadEqMock = vi.fn(() => ({ order: firstOrderMock }))
- const loadSelectMock = vi.fn(() => ({ eq: loadEqMock }))
-
- const insertSingleMock = insertThrows
-  ? vi.fn().mockRejectedValue(insertThrows)
-  : vi.fn().mockResolvedValue(insertResult)
- const insertSelectMock = vi.fn(() => ({ single: insertSingleMock }))
- const insertMock = vi.fn(() => ({ select: insertSelectMock }))
-
- const updateMaybeSingleMock = updateThrows
-  ? vi.fn().mockRejectedValue(updateThrows)
-  : vi.fn().mockResolvedValue(updateResult)
- const updateSelectMock = vi.fn(() => ({ maybeSingle: updateMaybeSingleMock }))
- const updateVersionEqMock = vi.fn(() => ({ select: updateSelectMock }))
- const updateEqMock = vi.fn(() => ({ eq: updateVersionEqMock }))
- const updateMock = vi.fn(() => ({ eq: updateEqMock }))
-
- const deleteTaskMaybeSingleMock = deleteThrows
-  ? vi.fn().mockRejectedValue(deleteThrows)
-  : vi.fn().mockResolvedValue(deleteResult)
- const deleteTaskSelectMock = vi.fn(() => ({
-  maybeSingle: deleteTaskMaybeSingleMock,
- }))
- const deleteTaskVersionEqMock = vi.fn(() => ({
-  select: deleteTaskSelectMock,
- }))
- const deleteTaskEqMock = vi.fn((column: string, value: string) => {
-  void column
-  void value
-
-  return { eq: deleteTaskVersionEqMock }
- })
- const deleteBoardEqMock = deleteByBoardThrows
-  ? vi.fn().mockRejectedValue(deleteByBoardThrows)
-  : vi.fn().mockResolvedValue(deleteByBoardResult)
- const deleteMock = vi.fn(() => ({
-  eq: vi.fn((column: string, value: string) =>
-   column === "board_id" ? deleteBoardEqMock(column, value) : deleteTaskEqMock(column, value),
-  ),
- }))
-
- const fromMock = vi.fn(() => ({
-  delete: deleteMock,
-  insert: insertMock,
-  select: loadSelectMock,
-  update: updateMock,
- }))
-
- getSupabaseMock.mockResolvedValue({ from: fromMock })
-
- return {
-  deleteBoardEqMock,
-  deleteMock,
-  deleteTaskEqMock,
-  fromMock,
-  insertMock,
-  loadEqMock,
-  updateMock,
- }
 }
 
 describe("useTasks local mode", () => {
@@ -224,6 +143,16 @@ describe("useTasks local mode", () => {
 
   isLocalDataModeMock.mockReturnValue(true)
   loadTasksMock.mockReturnValue([])
+  useOfflineSyncMock.mockReturnValue({
+   isOnline: true,
+   isRemoteReady: true,
+   mutations: [],
+   pendingEntityKeys: new Set<string>(),
+   requestSync: requestSyncMock,
+   retrySync: vi.fn(),
+   syncRevision: 0,
+   syncState: { status: "synced", pendingCount: 0 },
+  })
  })
 
  afterEach(() => {
@@ -473,9 +402,25 @@ describe("useTasks local mode", () => {
  })
 })
 
-// Remote writes moved to supabaseSyncEngine; these network-first expectations are
-// retained as migration history and replaced by sync engine/outbox tests.
-describe.skip("useTasks legacy network-first Supabase mode", () => {
+describe("useTasks network/staged-mutation mode", () => {
+ const createTaskSelectMock = ({
+  loadResult = { data: [], error: null },
+  loadPromise,
+ }: {
+  loadResult?: TaskLoadResult
+  loadPromise?: Promise<TaskLoadResult>
+ }) => {
+  const secondOrderMock = vi.fn(() => loadPromise ?? Promise.resolve(loadResult))
+  const firstOrderMock = vi.fn(() => ({ order: secondOrderMock }))
+  const loadEqMock = vi.fn(() => ({ order: firstOrderMock }))
+  const loadSelectMock = vi.fn(() => ({ eq: loadEqMock }))
+  const fromMock = vi.fn(() => ({ select: loadSelectMock }))
+
+  getSupabaseMock.mockResolvedValue({ from: fromMock })
+
+  return { fromMock, loadEqMock }
+ }
+
  beforeEach(() => {
   vi.useFakeTimers()
   vi.setSystemTime(new Date(fixedNow))
@@ -484,10 +429,22 @@ describe.skip("useTasks legacy network-first Supabase mode", () => {
   isLocalDataModeMock.mockReturnValue(false)
   readCachedTasksMock.mockResolvedValue([])
   replaceCachedTasksMock.mockResolvedValue(undefined)
-  deleteCachedTaskMock.mockResolvedValue(undefined)
   deleteCachedTasksByBoardMock.mockResolvedValue(undefined)
-  upsertCachedTaskMock.mockResolvedValue(undefined)
   persistTaskRealtimePayloadMock.mockResolvedValue(undefined)
+  stageTaskUpsertMock.mockReset().mockResolvedValue(undefined)
+  stageTaskDeleteMock.mockReset().mockResolvedValue(undefined)
+  requestSyncMock.mockReset()
+  useOfflineSyncMock.mockReturnValue({
+   isOnline: true,
+   isRemoteReady: true,
+   mutations: [] as PendingMutation[],
+   pendingEntityKeys: new Set<string>(),
+   requestSync: requestSyncMock,
+   retrySync: vi.fn(),
+   syncRevision: 0,
+   syncState: { status: "synced" as const, pendingCount: 0 },
+  })
+  createTaskSelectMock({})
  })
 
  afterEach(() => {
@@ -496,246 +453,244 @@ describe.skip("useTasks legacy network-first Supabase mode", () => {
   vi.clearAllMocks()
  })
 
- it("loads tasks from Supabase", async () => {
-  const rows = [
-   createTaskRow({ id: "task-1", status: "in_progress", position: 1 }),
-   createTaskRow({ id: "task-2", title: "完成 task", status: "done" }),
-  ]
-  const { loadEqMock } = createTaskSupabaseMock({
-   loadResult: { data: rows, error: null },
-  })
-
-  const { result } = renderHook(() => useTasks("board-1"))
-
-  await flushLocalEffect()
-
-  expect(loadEqMock).toHaveBeenCalledWith("board_id", "board-1")
-  expect(result.current.tasks).toEqual([
-   createTaskFixture({
-    id: "task-2",
-    title: "完成 task",
-    statusKey: "done",
-   }),
-   createTaskFixture({
-    id: "task-1",
-    statusKey: "inProgress",
-    position: 1,
-   }),
-  ])
-  expect(result.current.isLoadingTasks).toBe(false)
- })
-
- it("hydrates cached tasks before the Supabase snapshot completes", async () => {
-  const snapshotDeferred = createDeferred<TaskLoadResult>()
+ it("hydrates from the cached replica on mount", async () => {
   const cachedTask = createTaskFixture({ id: "cached-task", title: "Cached task" })
-  const serverRow = createTaskRow({ id: "server-task", title: "Server task" })
-
   readCachedTasksMock.mockResolvedValue([cachedTask])
-  createTaskSupabaseMock({ loadPromise: snapshotDeferred.promise })
+  createTaskSelectMock({ loadPromise: new Promise(() => undefined) })
 
   const { result } = renderHook(() => useTasks("board-1", "owner-1"))
-
-  await flushLocalEffect()
-
-  expect(result.current.tasks).toEqual([cachedTask])
-  expect(result.current.isLoadingTasks).toBe(false)
-
-  await act(async () => {
-   snapshotDeferred.resolve({ data: [serverRow], error: null })
-   await snapshotDeferred.promise
-  })
-
-  expect(result.current.tasks).toEqual([
-   createTaskFixture({ id: "server-task", title: "Server task" }),
-  ])
- })
-
- it("hydrates cached tasks when switching boards offline without starting Supabase", async () => {
-  const firstBoardTask = createTaskFixture({ id: "cached-task", title: "Offline task" })
-  const secondBoardTask = createTaskFixture({
-   id: "board-2-task",
-   boardId: "board-2",
-   title: "Board 2 offline task",
-  })
-
-  readCachedTasksMock.mockImplementation((_ownerId: string, boardId: string) =>
-   Promise.resolve(boardId === "board-1" ? [firstBoardTask] : [secondBoardTask]),
-  )
-
-  const { result, rerender } = renderHook(
-   ({ boardId }: { boardId: string }) => useTasks(boardId, "owner-1", false),
-   { initialProps: { boardId: "board-1" } },
-  )
 
   await flushLocalEffect()
 
   expect(readCachedTasksMock).toHaveBeenCalledWith("owner-1", "board-1")
-  expect(result.current.tasks).toEqual([firstBoardTask])
-
-  rerender({ boardId: "board-2" })
-  await flushLocalEffect()
-
-  expect(readCachedTasksMock).toHaveBeenCalledWith("owner-1", "board-2")
-  expect(getSupabaseMock).not.toHaveBeenCalled()
-  expect(realtimeTableRefreshMock).toHaveBeenLastCalledWith(
-   expect.objectContaining({ enabled: false }),
-  )
-  expect(result.current.tasks).toEqual([secondBoardTask])
-  expect(result.current.isLoadingTasks).toBe(false)
-  expect(result.current.taskError).toBe("")
+  expect(result.current.tasks).toEqual([cachedTask])
  })
 
- it("does not let slower cached tasks overwrite the Supabase snapshot", async () => {
-  const cacheDeferred = createDeferred<Task[]>()
-  const serverRow = createTaskRow({ id: "server-task", title: "Server task", version: 2 })
-
-  readCachedTasksMock.mockReturnValue(cacheDeferred.promise)
-  createTaskSupabaseMock({
-   loadResult: { data: [serverRow], error: null },
-  })
+ it("stages a task upsert and requests a sync when creating a task", async () => {
+  const existingRow = createTaskRow({ id: "task-1" })
+  createTaskSelectMock({ loadResult: { data: [existingRow], error: null } })
 
   const { result } = renderHook(() => useTasks("board-1", "owner-1"))
-
   await flushLocalEffect()
 
-  expect(result.current.tasks).toEqual([
-   createTaskFixture({ id: "server-task", title: "Server task", version: 2 }),
-  ])
-
+  let createdTask: Task | null = null
   await act(async () => {
-   cacheDeferred.resolve([createTaskFixture({ id: "cached-task", title: "Stale cache" })])
-   await cacheDeferred.promise
+   createdTask = await result.current.createTask({ title: "新 task", description: "", statusKey: "todo" })
   })
 
-  expect(result.current.tasks).toEqual([
-   createTaskFixture({ id: "server-task", title: "Server task", version: 2 }),
-  ])
+  expect(createdTask).not.toBeNull()
+  expect(stageTaskUpsertMock).toHaveBeenCalledWith("owner-1", expect.objectContaining({ title: "新 task" }))
+  expect(requestSyncMock).toHaveBeenCalled()
+  expect(result.current.tasks.some((task) => task.title === "新 task")).toBe(true)
  })
 
- it("does not let slower cached tasks overwrite a Realtime update", async () => {
-  const cacheDeferred = createDeferred<Task[]>()
-  const snapshotDeferred = createDeferred<TaskLoadResult>()
-
-  readCachedTasksMock.mockReturnValue(cacheDeferred.promise)
-  createTaskSupabaseMock({ loadPromise: snapshotDeferred.promise })
+ it("rolls back an optimistic create and reports the error when staging fails", async () => {
+  const error = new Error("stage failed")
+  stageTaskUpsertMock.mockRejectedValue(error)
 
   const { result } = renderHook(() => useTasks("board-1", "owner-1"))
-
   await flushLocalEffect()
 
-  const realtimeOptions = realtimeTableRefreshMock.mock.calls.at(-1)?.[0] as
-   | {
-      onChange: (payload: RealtimePostgresUpdatePayload<TaskRow>) => void
-     }
-   | undefined
-
-  if (!realtimeOptions) {
-   throw new Error("Realtime options were not registered")
-  }
-  const realtimePayload: RealtimePostgresUpdatePayload<TaskRow> = {
-   schema: "public",
-   table: "tasks",
-   commit_timestamp: "2026-06-05T13:00:00.000Z",
-   errors: [],
-   eventType: "UPDATE",
-   new: createTaskRow({ title: "Realtime task", version: 2 }),
-   old: { id: "task-1", version: 1 },
-  }
-
-  act(() => {
-   realtimeOptions.onChange(realtimePayload)
-  })
-
-  expect(persistTaskRealtimePayloadMock).toHaveBeenCalledWith(
-   "owner-1",
-   "board-1",
-   realtimePayload,
-  )
-  expect(result.current.tasks).toEqual([
-   createTaskFixture({ title: "Realtime task", version: 2 }),
-  ])
-
+  let createdTask: Task | null = null
   await act(async () => {
-   cacheDeferred.resolve([createTaskFixture({ title: "Stale cache" })])
-   await cacheDeferred.promise
+   createdTask = await result.current.createTask({ title: "新 task", description: "", statusKey: "todo" })
   })
 
-  expect(result.current.tasks).toEqual([
-   createTaskFixture({ title: "Realtime task", version: 2 }),
-  ])
+  expect(createdTask).toBeNull()
+  expect(result.current.tasks.some((task) => task.title === "新 task")).toBe(false)
+  expect(result.current.taskError).toBe("無法把 Task 儲存到此裝置")
+  expect(captureAppErrorMock).toHaveBeenCalledWith(error, {
+   area: "local-replica",
+   action: "stageTaskCreate",
+   ownerId: "owner-1",
+  })
  })
 
- it("replays a Realtime update that arrives while a snapshot is loading", async () => {
-  const snapshotDeferred = createDeferred<TaskLoadResult>()
-
-  readCachedTasksMock.mockResolvedValue([])
-  createTaskSupabaseMock({ loadPromise: snapshotDeferred.promise })
+ it("stages a task update and requests a sync", async () => {
+  const existingRow = createTaskRow({ id: "task-1", title: "設計登入流程" })
+  createTaskSelectMock({ loadResult: { data: [existingRow], error: null } })
 
   const { result } = renderHook(() => useTasks("board-1", "owner-1"))
-
   await flushLocalEffect()
 
-  const realtimeOptions = realtimeTableRefreshMock.mock.calls.at(-1)?.[0] as
-   | {
-      onChange: (payload: RealtimePostgresUpdatePayload<TaskRow>) => void
-     }
-   | undefined
-
-  if (!realtimeOptions) {
-   throw new Error("Realtime options were not registered")
-  }
-
-  const realtimePayload: RealtimePostgresUpdatePayload<TaskRow> = {
-   schema: "public",
-   table: "tasks",
-   commit_timestamp: "2026-06-05T13:00:00.000Z",
-   errors: [],
-   eventType: "UPDATE",
-   new: createTaskRow({ title: "Realtime task", version: 2 }),
-   old: { id: "task-1", version: 1 },
-  }
-
-  act(() => {
-   realtimeOptions.onChange(realtimePayload)
-  })
-
+  let updatedTask: Task | null = null
   await act(async () => {
-   snapshotDeferred.resolve({
-    data: [createTaskRow({ title: "Stale snapshot", version: 1 })],
-    error: null,
+   updatedTask = await result.current.updateTask("task-1", {
+    title: "已更新",
+    description: "",
+    statusKey: "todo",
    })
-   await snapshotDeferred.promise
   })
 
-  expect(result.current.tasks).toEqual([
-   createTaskFixture({ title: "Realtime task", version: 2 }),
-  ])
-  expect(replaceCachedTasksMock).toHaveBeenLastCalledWith(
-   "owner-1",
-   "board-1",
-   [createTaskFixture({ title: "Realtime task", version: 2 })],
-  )
+  expect(updatedTask).not.toBeNull()
+  expect(stageTaskUpsertMock).toHaveBeenCalledWith("owner-1", expect.objectContaining({ title: "已更新" }))
+  expect(requestSyncMock).toHaveBeenCalled()
+  expect(result.current.tasks[0].title).toBe("已更新")
  })
 
- it("replays a Realtime delete that arrives while a snapshot is loading", async () => {
-  const snapshotDeferred = createDeferred<TaskLoadResult>()
-
-  readCachedTasksMock.mockResolvedValue([])
-  createTaskSupabaseMock({ loadPromise: snapshotDeferred.promise })
+ it("rolls back an optimistic update and reports the error when staging fails", async () => {
+  const error = new Error("stage failed")
+  const existingRow = createTaskRow({ id: "task-1", title: "設計登入流程" })
+  createTaskSelectMock({ loadResult: { data: [existingRow], error: null } })
+  stageTaskUpsertMock.mockRejectedValue(error)
 
   const { result } = renderHook(() => useTasks("board-1", "owner-1"))
+  await flushLocalEffect()
 
+  let updatedTask: Task | null = null
+  await act(async () => {
+   updatedTask = await result.current.updateTask("task-1", {
+    title: "已更新",
+    description: "",
+    statusKey: "todo",
+   })
+  })
+
+  expect(updatedTask).toBeNull()
+  expect(result.current.tasks[0].title).toBe("設計登入流程")
+  expect(result.current.taskError).toBe("無法把 Task 修改儲存到此裝置")
+  expect(captureAppErrorMock).toHaveBeenCalledWith(error, {
+   area: "local-replica",
+   action: "stageTaskUpdate",
+   ownerId: "owner-1",
+  })
+ })
+
+ it("stages a task delete, removes it optimistically, and requests a sync", async () => {
+  const rows = [createTaskRow({ id: "task-1" }), createTaskRow({ id: "task-2", title: "保留 task" })]
+  createTaskSelectMock({ loadResult: { data: rows, error: null } })
+
+  const { result } = renderHook(() => useTasks("board-1", "owner-1"))
+  await flushLocalEffect()
+
+  await act(async () => {
+   await result.current.deleteTask("task-1")
+  })
+
+  expect(stageTaskDeleteMock).toHaveBeenCalledWith("owner-1", expect.objectContaining({ id: "task-1" }))
+  expect(requestSyncMock).toHaveBeenCalled()
+  expect(result.current.tasks.some((task) => task.id === "task-1")).toBe(false)
+ })
+
+ it("rolls back an optimistic delete and reports the error when staging fails", async () => {
+  const error = new Error("stage failed")
+  const rows = [createTaskRow({ id: "task-1" }), createTaskRow({ id: "task-2", title: "保留 task" })]
+  createTaskSelectMock({ loadResult: { data: rows, error: null } })
+  stageTaskDeleteMock.mockRejectedValue(error)
+
+  const { result } = renderHook(() => useTasks("board-1", "owner-1"))
+  await flushLocalEffect()
+
+  await act(async () => {
+   await result.current.deleteTask("task-1")
+  })
+
+  expect(result.current.tasks.some((task) => task.id === "task-1")).toBe(true)
+  expect(result.current.taskError).toBe("無法在此裝置刪除 Task")
+  expect(captureAppErrorMock).toHaveBeenCalledWith(error, {
+   area: "local-replica",
+   action: "stageTaskDelete",
+   ownerId: "owner-1",
+  })
+ })
+
+ it("stages a task move and requests a sync", async () => {
+  const existingRow = createTaskRow({ id: "task-1", status: "todo", position: 0 })
+  createTaskSelectMock({ loadResult: { data: [existingRow], error: null } })
+
+  const { result } = renderHook(() => useTasks("board-1", "owner-1"))
+  await flushLocalEffect()
+
+  await act(async () => {
+   await result.current.moveTaskStatus("task-1", "done")
+  })
+
+  expect(stageTaskUpsertMock).toHaveBeenCalledWith(
+   "owner-1",
+   expect.objectContaining({ id: "task-1", statusKey: "done" }),
+  )
+  expect(requestSyncMock).toHaveBeenCalled()
+  expect(result.current.tasks[0].statusKey).toBe("done")
+ })
+
+ it("rolls back a task move and reports the error when staging fails", async () => {
+  const error = new Error("stage failed")
+  const existingRow = createTaskRow({ id: "task-1", status: "todo", position: 0 })
+  createTaskSelectMock({ loadResult: { data: [existingRow], error: null } })
+  stageTaskUpsertMock.mockRejectedValue(error)
+
+  const { result } = renderHook(() => useTasks("board-1", "owner-1"))
+  await flushLocalEffect()
+
+  await act(async () => {
+   await result.current.moveTaskStatus("task-1", "done")
+  })
+
+  expect(result.current.tasks[0].statusKey).toBe("todo")
+  expect(result.current.taskError).toBe("無法在此裝置儲存拖曳結果")
+  expect(captureAppErrorMock).toHaveBeenCalledWith(error, {
+   area: "local-replica",
+   action: "stageTaskMove",
+   ownerId: "owner-1",
+  })
+ })
+
+ it("deletes cached tasks by board", async () => {
+  const rows = [createTaskRow({ id: "task-1", board_id: "board-1" })]
+  createTaskSelectMock({ loadResult: { data: rows, error: null } })
+
+  const { result } = renderHook(() => useTasks("board-1", "owner-1"))
+  await flushLocalEffect()
+
+  await act(async () => {
+   await result.current.deleteTasksByBoard("board-1")
+  })
+
+  expect(deleteCachedTasksByBoardMock).toHaveBeenCalledWith("owner-1", "board-1")
+  expect(result.current.tasks).toEqual([])
+ })
+
+ it("reconciles an incoming realtime update through the registered onChange handler", async () => {
+  const existingRow = createTaskRow({ id: "task-1", version: 1 })
+  createTaskSelectMock({ loadResult: { data: [existingRow], error: null } })
+
+  const { result } = renderHook(() => useTasks("board-1", "owner-1"))
   await flushLocalEffect()
 
   const realtimeOptions = realtimeTableRefreshMock.mock.calls.at(-1)?.[0] as
-   | {
-      onChange: (payload: RealtimePostgresDeletePayload<TaskRow>) => void
-     }
+   | { onChange: (payload: RealtimePostgresUpdatePayload<TaskRow>) => void }
    | undefined
+  if (!realtimeOptions) throw new Error("Realtime options were not registered")
 
-  if (!realtimeOptions) {
-   throw new Error("Realtime options were not registered")
+  const realtimePayload: RealtimePostgresUpdatePayload<TaskRow> = {
+   schema: "public",
+   table: "tasks",
+   commit_timestamp: "2026-06-05T13:00:00.000Z",
+   errors: [],
+   eventType: "UPDATE",
+   new: createTaskRow({ id: "task-1", title: "Realtime task", version: 2 }),
+   old: { id: "task-1", version: 1 },
   }
+
+  act(() => {
+   realtimeOptions.onChange(realtimePayload)
+  })
+
+  expect(persistTaskRealtimePayloadMock).toHaveBeenCalledWith("owner-1", "board-1", realtimePayload)
+  expect(result.current.tasks.find((task) => task.id === "task-1")?.title).toBe("Realtime task")
+ })
+
+ it("reconciles an incoming realtime delete through the registered onChange handler", async () => {
+  const existingRow = createTaskRow({ id: "task-1" })
+  createTaskSelectMock({ loadResult: { data: [existingRow], error: null } })
+
+  const { result } = renderHook(() => useTasks("board-1", "owner-1"))
+  await flushLocalEffect()
+
+  const realtimeOptions = realtimeTableRefreshMock.mock.calls.at(-1)?.[0] as
+   | { onChange: (payload: RealtimePostgresDeletePayload<TaskRow>) => void }
+   | undefined
+  if (!realtimeOptions) throw new Error("Realtime options were not registered")
 
   act(() => {
    realtimeOptions.onChange({
@@ -749,623 +704,18 @@ describe.skip("useTasks legacy network-first Supabase mode", () => {
    })
   })
 
-  await act(async () => {
-   snapshotDeferred.resolve({
-    data: [createTaskRow({ id: "task-1", version: 1 })],
-    error: null,
-   })
-   await snapshotDeferred.promise
-  })
-
-  expect(result.current.tasks).toEqual([])
-  expect(replaceCachedTasksMock).toHaveBeenLastCalledWith("owner-1", "board-1", [])
+  expect(result.current.tasks.some((task) => task.id === "task-1")).toBe(false)
  })
 
- it("ignores cached tasks after switching boards", async () => {
-  const firstBoardCacheDeferred = createDeferred<Task[]>()
-  const secondBoardTask = createTaskFixture({
-   id: "board-2-task",
-   boardId: "board-2",
-   title: "Board 2 task",
-  })
-
-  readCachedTasksMock.mockImplementation((_ownerId: string, boardId: string) =>
-   boardId === "board-1" ? firstBoardCacheDeferred.promise : Promise.resolve([secondBoardTask]),
-  )
-  getSupabaseMock.mockReturnValue(new Promise(() => undefined))
-
-  const { result, rerender } = renderHook(
-   ({ boardId }: { boardId: string }) => useTasks(boardId, "owner-1"),
-   { initialProps: { boardId: "board-1" } },
-  )
-
-  rerender({ boardId: "board-2" })
-  await flushLocalEffect()
-
-  expect(result.current.tasks).toEqual([secondBoardTask])
-
-  await act(async () => {
-   firstBoardCacheDeferred.resolve([
-    createTaskFixture({ id: "board-1-task", title: "Board 1 task" }),
-   ])
-   await firstBoardCacheDeferred.promise
-  })
-
-  expect(result.current.tasks).toEqual([secondBoardTask])
- })
-
- it("continues loading Supabase tasks when IndexedDB hydration fails", async () => {
-  const cacheError = new Error("IndexedDB unavailable")
-  const serverRow = createTaskRow({ id: "server-task", title: "Server task" })
-
-  readCachedTasksMock.mockRejectedValue(cacheError)
-  createTaskSupabaseMock({
-   loadResult: { data: [serverRow], error: null },
-  })
-
-  const { result } = renderHook(() => useTasks("board-1", "owner-1"))
-
-  await flushLocalEffect()
-
-  expect(captureAppErrorMock).toHaveBeenCalledWith(cacheError, {
-   area: "local-replica",
-   action: "readTasks",
-   ownerId: "owner-1",
-   boardId: "board-1",
-  })
-  expect(result.current.tasks).toEqual([
-   createTaskFixture({ id: "server-task", title: "Server task" }),
-  ])
- })
-
- it("clears tasks and shows the Supabase load error", async () => {
-  createTaskSupabaseMock({
-   loadResult: { data: [], error: { message: "Load failed" } },
-  })
-
+ it("returns null without staging when creating without an owner id", async () => {
   const { result } = renderHook(() => useTasks("board-1"))
-
-  await flushLocalEffect()
-
-  expect(result.current.tasks).toEqual([])
-  expect(result.current.taskError).toBe("Load failed")
-  expect(result.current.isLoadingTasks).toBe(false)
- })
-
- it("captures thrown load errors and shows a fallback message", async () => {
-  const error = new Error("network down")
-  getSupabaseMock.mockRejectedValue(error)
-
-  const { result } = renderHook(() => useTasks("board-1"))
-
-  await flushLocalEffect()
-
-  expect(captureAppErrorMock).toHaveBeenCalledWith(error, {
-   area: "tasks",
-   action: "refreshTasks",
-   boardId: "board-1",
-  })
-  expect(result.current.tasks).toEqual([])
-  expect(result.current.taskError).toBe("載入 tasks 時發生錯誤，請稍後再試")
- })
-
- it("creates a task and replaces the optimistic task with Supabase data", async () => {
-  const existingRow = createTaskRow({ id: "task-1", position: 2 })
-  const createdRow = createTaskRow({
-   id: "task-new",
-   title: "新 task",
-   description: "新描述",
-   status: "todo",
-   position: 3,
-   created_at: "2026-06-05T13:00:00.000Z",
-   updated_at: "2026-06-05T13:00:00.000Z",
-  })
-  const { insertMock } = createTaskSupabaseMock({
-   loadResult: { data: [existingRow], error: null },
-   insertResult: { data: createdRow, error: null },
-  })
-
-  const { result } = renderHook(() => useTasks("board-1", "owner-1"))
-  await flushLocalEffect()
 
   let createdTask: Task | null = null
-
   await act(async () => {
-   createdTask = await result.current.createTask({
-    title: "  新 task  ",
-    description: "  新描述  ",
-    statusKey: "todo",
-   })
-  })
-
-  const expectedTask = createTaskFixture({
-   id: "task-new",
-   title: "新 task",
-   description: "新描述",
-   position: 3,
-   createdAt: "2026-06-05T13:00:00.000Z",
-   updatedAt: "2026-06-05T13:00:00.000Z",
-  })
-
-  expect(insertMock).toHaveBeenCalledWith({
-   id: "task-new",
-   board_id: "board-1",
-   title: "新 task",
-   description: "新描述",
-   status: "todo",
-   position: 3,
-  })
-  expect(createdTask).toEqual(expectedTask)
-  expect(result.current.tasks).toEqual([createTaskFixture({ id: "task-1", position: 2 }), expectedTask])
-  expect(upsertCachedTaskMock).toHaveBeenCalledWith("owner-1", expectedTask)
- })
-
- it("rolls back an optimistic task when create returns an error", async () => {
-  createTaskSupabaseMock({
-   loadResult: { data: [createTaskRow({ id: "task-1" })], error: null },
-   insertResult: { data: null, error: { message: "Create failed" } },
-  })
-
-  const { result } = renderHook(() => useTasks("board-1"))
-  await flushLocalEffect()
-
-  let createdTask: Task | null = null
-
-  await act(async () => {
-   createdTask = await result.current.createTask({
-    title: "新 task",
-    description: "",
-    statusKey: "todo",
-   })
+   createdTask = await result.current.createTask({ title: "新 task", description: "", statusKey: "todo" })
   })
 
   expect(createdTask).toBeNull()
-  expect(result.current.tasks).toEqual([createTaskFixture({ id: "task-1" })])
-  expect(result.current.taskError).toBe("Create failed")
- })
-
- it("captures thrown create errors and rolls back the optimistic task", async () => {
-  const error = new Error("create exploded")
-  createTaskSupabaseMock({
-   loadResult: { data: [createTaskRow({ id: "task-1" })], error: null },
-   insertThrows: error,
-  })
-
-  const { result } = renderHook(() => useTasks("board-1"))
-  await flushLocalEffect()
-
-  let createdTask: Task | null = null
-
-  await act(async () => {
-   createdTask = await result.current.createTask({
-    title: "新 task",
-    description: "",
-    statusKey: "todo",
-   })
-  })
-
-  expect(createdTask).toBeNull()
-  expect(captureAppErrorMock).toHaveBeenCalledWith(error, {
-   area: "tasks",
-   action: "createTask",
-   boardId: "board-1",
-   statusKey: "todo",
-  })
-  expect(result.current.tasks).toEqual([createTaskFixture({ id: "task-1" })])
-  expect(result.current.taskError).toBe("建立 task 時發生錯誤，請稍後再試")
- })
-
- it("returns null without Supabase when creating without board id", async () => {
-  const { result } = renderHook(() => useTasks(null))
-
-  let createdTask: Task | null = null
-
-  await act(async () => {
-   createdTask = await result.current.createTask({
-    title: "新 task",
-    description: "",
-    statusKey: "todo",
-   })
-  })
-
-  expect(createdTask).toBeNull()
-  expect(getSupabaseMock).not.toHaveBeenCalled()
- })
-
- it("updates a task with Supabase data", async () => {
-  const updatedRow = createTaskRow({
-   id: "task-1",
-   title: "已更新",
-   description: "新描述",
-   status: "done",
-   position: 0,
-   version: 2,
-   updated_at: "2026-06-05T13:00:00.000Z",
-  })
-  const { updateMock } = createTaskSupabaseMock({
-   loadResult: { data: [createTaskRow({ id: "task-1" })], error: null },
-   updateResult: { data: updatedRow, error: null },
-  })
-
-  const { result } = renderHook(() => useTasks("board-1", "owner-1"))
-  await flushLocalEffect()
-
-  let updatedTask: Task | null = null
-
-  await act(async () => {
-   updatedTask = await result.current.updateTask("task-1", {
-    title: "  已更新  ",
-    description: "  新描述  ",
-    statusKey: "done",
-   })
-  })
-
-  expect(updateMock).toHaveBeenCalledWith({
-   title: "已更新",
-   description: "新描述",
-   status: "done",
-   position: 0,
-   updated_at: fixedNow,
-  })
-  expect(updatedTask).toEqual(
-   createTaskFixture({
-    id: "task-1",
-    title: "已更新",
-    description: "新描述",
-    statusKey: "done",
-    version: 2,
-    updatedAt: "2026-06-05T13:00:00.000Z",
-   }),
-  )
-  expect(result.current.tasks[0]).toEqual(updatedTask)
-  expect(upsertCachedTaskMock).toHaveBeenCalledWith("owner-1", updatedTask)
- })
-
- it("rolls back a task update when Supabase returns an error", async () => {
-  const previousTask = createTaskFixture({ id: "task-1" })
-  createTaskSupabaseMock({
-   loadResult: { data: [createTaskRow({ id: "task-1" })], error: null },
-   updateResult: { data: null, error: { message: "Update failed" } },
-  })
-
-  const { result } = renderHook(() => useTasks("board-1"))
-  await flushLocalEffect()
-
-  let updatedTask: Task | null = null
-
-  await act(async () => {
-   updatedTask = await result.current.updateTask("task-1", {
-    title: "已更新",
-    description: "",
-    statusKey: "todo",
-   })
-  })
-
-  expect(updatedTask).toBeNull()
-  expect(result.current.tasks).toEqual([previousTask])
-  expect(result.current.taskError).toBe("Update failed")
- })
-
- it("captures thrown update errors and rolls back the optimistic task", async () => {
-  const error = new Error("update exploded")
-  const previousTask = createTaskFixture({ id: "task-1" })
-  createTaskSupabaseMock({
-   loadResult: { data: [createTaskRow({ id: "task-1" })], error: null },
-   updateThrows: error,
-  })
-
-  const { result } = renderHook(() => useTasks("board-1"))
-  await flushLocalEffect()
-
-  let updatedTask: Task | null = null
-
-  await act(async () => {
-   updatedTask = await result.current.updateTask("task-1", {
-    title: "已更新",
-    description: "",
-    statusKey: "done",
-   })
-  })
-
-  expect(updatedTask).toBeNull()
-  expect(captureAppErrorMock).toHaveBeenCalledWith(error, {
-   area: "tasks",
-   action: "updateTask",
-   boardId: "board-1",
-   taskId: "task-1",
-   statusKey: "done",
-  })
-  expect(result.current.tasks).toEqual([previousTask])
-  expect(result.current.taskError).toBe("更新 task 時發生錯誤，請稍後再試")
- })
-
- it("returns null without Supabase when updating a missing task", async () => {
-  const { updateMock } = createTaskSupabaseMock({
-   loadResult: { data: [createTaskRow({ id: "task-1" })], error: null },
-  })
-
-  const { result } = renderHook(() => useTasks("board-1"))
-  await flushLocalEffect()
-
-  let updatedTask: Task | null = null
-
-  await act(async () => {
-   updatedTask = await result.current.updateTask("missing-task", {
-    title: "已更新",
-    description: "",
-    statusKey: "todo",
-   })
-  })
-
-  expect(updatedTask).toBeNull()
-  expect(updateMock).not.toHaveBeenCalled()
- })
-
- it("deletes a task through Supabase", async () => {
-  const rows = [createTaskRow({ id: "task-1" }), createTaskRow({ id: "task-2", title: "保留 task" })]
-  const { deleteTaskEqMock } = createTaskSupabaseMock({
-   loadResult: { data: rows, error: null },
-   deleteResult: { data: { id: "task-1" }, error: null },
-  })
-
-  const { result } = renderHook(() => useTasks("board-1", "owner-1"))
-  await flushLocalEffect()
-
-  await act(async () => {
-   await result.current.deleteTask("task-1")
-  })
-
-  expect(deleteTaskEqMock).toHaveBeenCalledWith("id", "task-1")
-  expect(deleteCachedTaskMock).toHaveBeenCalledWith("owner-1", "task-1")
-  expect(result.current.tasks).toEqual([createTaskFixture({ id: "task-2", title: "保留 task" })])
- })
-
- it("rolls back a task delete when Supabase returns an error", async () => {
-  const rows = [createTaskRow({ id: "task-1" }), createTaskRow({ id: "task-2", title: "保留 task" })]
-  createTaskSupabaseMock({
-   loadResult: { data: rows, error: null },
-   deleteResult: { error: { message: "Delete failed" } },
-  })
-
-  const { result } = renderHook(() => useTasks("board-1"))
-  await flushLocalEffect()
-
-  await act(async () => {
-   await result.current.deleteTask("task-1")
-  })
-
-  expect(result.current.tasks).toEqual([
-   createTaskFixture({ id: "task-2", title: "保留 task" }),
-   createTaskFixture({ id: "task-1" }),
-  ])
-  expect(result.current.taskError).toBe("Delete failed")
- })
-
- it("captures thrown delete errors and rolls back the deleted task", async () => {
-  const error = new Error("delete exploded")
-  const rows = [createTaskRow({ id: "task-1" }), createTaskRow({ id: "task-2", title: "保留 task" })]
-  createTaskSupabaseMock({
-   loadResult: { data: rows, error: null },
-   deleteThrows: error,
-  })
-
-  const { result } = renderHook(() => useTasks("board-1"))
-  await flushLocalEffect()
-
-  await act(async () => {
-   await result.current.deleteTask("task-1")
-  })
-
-  expect(captureAppErrorMock).toHaveBeenCalledWith(error, {
-   area: "tasks",
-   action: "deleteTask",
-   boardId: "board-1",
-   taskId: "task-1",
-  })
-  expect(result.current.tasks).toEqual([
-   createTaskFixture({ id: "task-2", title: "保留 task" }),
-   createTaskFixture({ id: "task-1" }),
-  ])
-  expect(result.current.taskError).toBe("刪除 task 時發生錯誤，請稍後再試")
- })
-
- it("does not call Supabase when deleting a missing task", async () => {
-  const { deleteMock } = createTaskSupabaseMock({
-   loadResult: { data: [createTaskRow({ id: "task-1" })], error: null },
-  })
-
-  const { result } = renderHook(() => useTasks("board-1"))
-  await flushLocalEffect()
-
-  await act(async () => {
-   await result.current.deleteTask("missing-task")
-  })
-
-  expect(deleteMock).not.toHaveBeenCalled()
- })
-
- it("moves a task and replaces it with Supabase data", async () => {
-  const movedRow = createTaskRow({
-   id: "task-1",
-   status: "done",
-   position: 1,
-   version: 2,
-   updated_at: "2026-06-05T13:00:00.000Z",
-  })
-  const { updateMock } = createTaskSupabaseMock({
-   loadResult: {
-    data: [
-     createTaskRow({ id: "task-1", status: "todo", position: 0 }),
-     createTaskRow({ id: "task-2", status: "done", position: 0 }),
-    ],
-    error: null,
-   },
-   updateResult: { data: movedRow, error: null },
-  })
-
-  const { result } = renderHook(() => useTasks("board-1", "owner-1"))
-  await flushLocalEffect()
-
-  await act(async () => {
-   await result.current.moveTaskStatus("task-1", "done")
-  })
-
-  expect(updateMock).toHaveBeenCalledWith({
-   status: "done",
-   position: 1,
-   updated_at: fixedNow,
-  })
-  expect(result.current.tasks).toEqual([
-   createTaskFixture({ id: "task-2", statusKey: "done" }),
-   createTaskFixture({
-    id: "task-1",
-    statusKey: "done",
-    position: 1,
-    version: 2,
-    updatedAt: "2026-06-05T13:00:00.000Z",
-   }),
-  ])
-  expect(upsertCachedTaskMock).toHaveBeenCalledWith(
-   "owner-1",
-   createTaskFixture({
-    id: "task-1",
-    statusKey: "done",
-    position: 1,
-    version: 2,
-    updatedAt: "2026-06-05T13:00:00.000Z",
-   }),
-  )
- })
-
- it("rolls back a task move when Supabase returns an error", async () => {
-  const previousTask = createTaskFixture({
-   id: "task-1",
-   statusKey: "todo",
-   position: 0,
-  })
-  createTaskSupabaseMock({
-   loadResult: { data: [createTaskRow({ id: "task-1" })], error: null },
-   updateResult: { data: null, error: { message: "Move failed" } },
-  })
-
-  const { result } = renderHook(() => useTasks("board-1"))
-  await flushLocalEffect()
-
-  await act(async () => {
-   await result.current.moveTaskStatus("task-1", "done")
-  })
-
-  expect(result.current.tasks).toEqual([previousTask])
-  expect(result.current.taskError).toBe("Move failed")
- })
-
- it("captures thrown move errors and rolls back the moved task", async () => {
-  const error = new Error("move exploded")
-  const previousTask = createTaskFixture({
-   id: "task-1",
-   statusKey: "todo",
-   position: 0,
-  })
-  createTaskSupabaseMock({
-   loadResult: { data: [createTaskRow({ id: "task-1" })], error: null },
-   updateThrows: error,
-  })
-
-  const { result } = renderHook(() => useTasks("board-1"))
-  await flushLocalEffect()
-
-  await act(async () => {
-   await result.current.moveTaskStatus("task-1", "done")
-  })
-
-  expect(captureAppErrorMock).toHaveBeenCalledWith(error, {
-   area: "tasks",
-   action: "moveTaskStatus",
-   boardId: "board-1",
-   taskId: "task-1",
-   statusKey: "done",
-  })
-  expect(result.current.tasks).toEqual([previousTask])
-  expect(result.current.taskError).toBe("移動 task 時發生錯誤，請稍後再試")
- })
-
- it("does not call Supabase when moving a missing task", async () => {
-  const { updateMock } = createTaskSupabaseMock({
-   loadResult: { data: [createTaskRow({ id: "task-1" })], error: null },
-  })
-
-  const { result } = renderHook(() => useTasks("board-1"))
-  await flushLocalEffect()
-
-  await act(async () => {
-   await result.current.moveTaskStatus("missing-task", "done")
-  })
-
-  expect(updateMock).not.toHaveBeenCalled()
- })
-
- it("deletes tasks by board through Supabase", async () => {
-  const { deleteBoardEqMock } = createTaskSupabaseMock({
-   loadResult: {
-    data: [createTaskRow({ id: "task-1", board_id: "board-1" })],
-    error: null,
-   },
-   deleteByBoardResult: { error: null },
-  })
-
-  const { result } = renderHook(() => useTasks("board-1", "owner-1"))
-  await flushLocalEffect()
-
-  await act(async () => {
-   await result.current.deleteTasksByBoard("board-1")
-  })
-
-  expect(deleteBoardEqMock).toHaveBeenCalledWith("board_id", "board-1")
-  expect(result.current.tasks).toEqual([])
-  expect(deleteCachedTasksByBoardMock).toHaveBeenCalledWith("owner-1", "board-1")
- })
-
- it("keeps tasks when deleting tasks by board returns an error", async () => {
-  const boardTask = createTaskRow({ id: "task-1", board_id: "board-1" })
-  createTaskSupabaseMock({
-   loadResult: { data: [boardTask], error: null },
-   deleteByBoardResult: { error: { message: "Delete board tasks failed" } },
-  })
-
-  const { result } = renderHook(() => useTasks("board-1"))
-  await flushLocalEffect()
-
-  await act(async () => {
-   await result.current.deleteTasksByBoard("board-1")
-  })
-
-  expect(result.current.tasks).toEqual([createTaskFixture({ id: "task-1" })])
-  expect(result.current.taskError).toBe("Delete board tasks failed")
- })
-
- it("captures thrown delete by board errors and keeps current tasks", async () => {
-  const error = new Error("delete board tasks exploded")
-  createTaskSupabaseMock({
-   loadResult: {
-    data: [createTaskRow({ id: "task-1", board_id: "board-1" })],
-    error: null,
-   },
-   deleteByBoardThrows: error,
-  })
-
-  const { result } = renderHook(() => useTasks("board-1"))
-  await flushLocalEffect()
-
-  await act(async () => {
-   await result.current.deleteTasksByBoard("board-1")
-  })
-
-  expect(captureAppErrorMock).toHaveBeenCalledWith(error, {
-   area: "tasks",
-   action: "deleteTasksByBoard",
-   boardId: "board-1",
-  })
-  expect(result.current.tasks).toEqual([createTaskFixture({ id: "task-1" })])
-  expect(result.current.taskError).toBe("刪除 board tasks 時發生錯誤，請稍後再試")
+  expect(stageTaskUpsertMock).not.toHaveBeenCalled()
  })
 })
